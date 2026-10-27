@@ -80,6 +80,11 @@
   .toast.ok { background: var(--ok); color: #04210f; }
   .big { font-size: 28px; font-weight: 800; }
   .empty { text-align: center; color: var(--muted); padding: 30px 0; }
+  .menu-card { display: flex; align-items: center; gap: 14px; width: 100%; border: 0; text-align: left; background: var(--card);
+    border-radius: 16px; padding: 22px 18px; margin-bottom: 12px; }
+  .menu-card .ico { font-size: 34px; }
+  .menu-card .t { font-size: 22px; font-weight: 800; }
+  .menu-card .freccia { margin-left: auto; font-size: 22px; }
   .avviso { background: rgba(255, 184, 77, .12); border: 1px solid var(--warn); color: var(--warn); border-radius: 12px;
     padding: 10px 12px; margin-top: 10px; font-size: 14px; }
 </style>
@@ -97,10 +102,12 @@ const LS = {
 };
 
 const S = {
-  pin: LS.get('pin'),
+  pin: LS.get('pin'),   // PIN in uso (decide la modalità)
+  pins: { tavoli: LS.get('pin_tavoli'), ingressi: LS.get('pin_ingressi') },  // PIN già usati su questo telefono
+  chiediPin: null,      // modalità per cui il menu sta chiedendo il PIN
   operatore: LS.get('operatore'),
   d: null,              // dati dal server (d.modo = 'tavoli' | 'ingressi')
-  view: 'login',        // login | noSerata | nuoviTavoli | lista | tavolo | ordine | ingresso | riepilogo
+  view: 'login',        // login | menu | noSerata | nuoviTavoli | lista | tavolo | ordine | ingresso | riepilogo
   tavoloId: null,
   nuovi: null,          // righe della pagina inserimento tavoli: [{numero, nome}]
   ordine: null,         // { id, step, qta: {bottigliaId: n}, contanti, carta, drink, note }
@@ -227,7 +234,7 @@ function pagatoOrdine() {
 const hdr = (title, back) =>
   (back ? '<button class="back" data-act="' + back + '" aria-label="Indietro">‹</button>' : '') +
   '<h1>' + title + '</h1>' +
-  (S.d && S.view !== 'login' ? '<span class="badge modo">' + nomeModo() + '</span>' : '') +
+  (S.d && S.view !== 'login' && S.view !== 'menu' ? '<span class="badge modo">' + nomeModo() + '</span>' : '') +
   '<span class="sync ' + S.sync + '" title="Sincronizzazione"></span>';
 
 const nav = cur =>
@@ -252,9 +259,41 @@ const VIEWS = {
     };
   },
 
+  menu() {
+    const serata = S.d.serata;
+    const g = sommaIngressi(S.d.ingressi);
+    const o = sommaOrdini(S.d.ordini);
+    const voce = (m, ico, titolo, info) => `<button class="menu-card" data-act="entra" data-m="${m}">
+        <span class="ico">${ico}</span>
+        <span><span class="t">${titolo}</span><br><span class="muted">${info}</span></span>
+        <span class="freccia muted">${S.pins[m] ? '&rsaquo;' : '&#128274;'}</span>
+      </button>`;
+    const formPin = S.chiediPin ? `<div class="card">
+        <label for="pin2">PIN ${S.chiediPin === 'tavoli' ? 'Tavoli' : 'Ingressi'}</label>
+        <input id="pin2" type="password" autocomplete="off" autocapitalize="off">
+        <div class="row" style="margin-top:12px">
+          <button class="btn" style="flex:1" data-act="menu">Annulla</button>
+          <button class="btn primary" style="flex:1" data-act="confermaPin" data-m="${S.chiediPin}">Entra</button>
+        </div>
+      </div>` : '';
+    return {
+      header: hdr('Menu'),
+      body: `<p class="muted" style="margin-top:0">Ciao ${esc(S.operatore)} · ${serata ? 'Serata ' + fmtData(serata.data) : 'Nessuna serata aperta'}</p>
+        ${voce('ingressi', '&#127903;&#65039;', 'Ingressi', serata ? g.persone + ' persone · ' + eur(g.importo) : 'Persone in entrata')}
+        ${voce('tavoli', '&#127870;', 'Tavoli', serata ? o.n + ' ordini · ' + eur(o.pagato) + ' pagato' : 'Ordini di bottiglie')}
+        ${formPin}
+        ${serata
+          ? '<button class="btn block" data-act="vai" data-v="riepilogo">Riepilogo serata</button>'
+          : '<button class="btn primary block" data-act="vai" data-v="noSerata">Apri serata</button>'}
+        <p class="muted" style="text-align:center;margin-top:24px">Operatore: ${esc(S.operatore)} ·
+          <a href="#" data-act="esci" style="color:var(--muted)">esci</a></p>`,
+      after() { if (S.chiediPin) $('pin2').focus(); },
+    };
+  },
+
   noSerata() {
     return {
-      header: hdr('Nessuna serata aperta'),
+      header: hdr('Nessuna serata aperta', 'menu'),
       body: `<div class="card">
         <label for="dataSerata">Data della serata</label>
         <input id="dataSerata" type="date" value="${oggi()}">
@@ -271,7 +310,7 @@ const VIEWS = {
         <button class="x" data-act="togliRiga" data-i="${i}" aria-label="Togli riga">×</button>
       </div>`).join('');
     return {
-      header: hdr(primi ? 'Tavoli della serata' : 'Aggiungi tavoli', primi ? null : 'vai" data-v="lista'),
+      header: hdr(primi ? 'Tavoli della serata' : 'Aggiungi tavoli', primi ? 'menu' : 'vai" data-v="lista'),
       body: `<p class="muted" style="margin-top:0">Inserisci numero e nome di ogni tavolo. Le righe vuote vengono ignorate.</p>
         <div class="row muted" style="padding:0 2px 6px"><span style="width:80px">Numero</span><span style="flex:1">Nome</span></div>
         ${righe}
@@ -313,7 +352,7 @@ const VIEWS = {
     }
 
     return {
-      header: hdr('Serata ' + fmtData(S.d.serata.data)),
+      header: hdr('Serata ' + fmtData(S.d.serata.data), 'menu'),
       body: `<div class="kpis">${kpi}</div>
         <button class="btn block" style="margin-bottom:14px" data-act="nuoviTavoli">+ Aggiungi tavoli</button>
         ${cards ? `<div class="grid">${cards}</div>` : '<p class="empty">Nessun tavolo.</p>'}`,
@@ -492,7 +531,7 @@ const VIEWS = {
       .map(k => `<tr><td>${esc(k)}</td><td>${perBott[k].qta}</td><td>${eur(perBott[k].tot)}</td></tr>`).join('');
 
     return {
-      header: hdr('Riepilogo ' + fmtData(S.d.serata.data)),
+      header: hdr('Riepilogo ' + fmtData(S.d.serata.data), 'menu'),
       body: `<div class="cat" style="margin-top:0">Ingressi</div>
         <div class="kpis">
           <div class="card"><div class="muted">Persone</div><div class="kpi">${g.persone}</div></div>
@@ -533,7 +572,7 @@ const VIEWS = {
 };
 
 function render() {
-  if (S.view !== 'login') {
+  if (S.view !== 'login' && S.view !== 'menu') {
     if (!S.d.serata) S.view = 'noSerata';
     else if (S.view === 'noSerata' || (S.view === 'lista' && !S.d.tavoli.length)) {
       S.nuovi = S.nuovi || righeVuote();
@@ -548,6 +587,13 @@ function render() {
   $('app').innerHTML = v.body;
   $('foot').innerHTML = v.footer ? '<div class="footer"><div class="inner">' + v.footer + '</div></div>' : '';
   if (v.after) v.after();
+}
+
+/** Salva il PIN in uso sotto la modalità che ha aperto. */
+function ricordaPin() {
+  S.pins[S.d.modo] = S.pin;
+  LS.set('pin_' + S.d.modo, S.pin);
+  LS.set('pin', S.pin);
 }
 
 const righeVuote = () => Array.from({ length: 5 }, () => ({ numero: '', nome: '' }));
@@ -573,15 +619,58 @@ const ACT = {
     if (!S.operatore) return toast('Inserisci il tuo nome');
     try { await call('stato'); } catch (e) { return; }
     LS.set('operatore', S.operatore);
-    LS.set('pin', S.pin);
-    S.view = 'lista';
+    ricordaPin();
+    S.view = 'menu';
     render();
   },
   esci() {
     S.pin = '';
-    LS.set('pin', '');
+    S.pins = { tavoli: '', ingressi: '' };
+    ['pin', 'pin_tavoli', 'pin_ingressi'].forEach(k => LS.set(k, ''));
     S.view = 'login';
     render();
+  },
+  menu() {
+    S.chiediPin = null;
+    S.view = 'menu';
+    render();
+    window.scrollTo(0, 0);
+  },
+  async entra(ds) {
+    const m = ds.m;
+    if (S.d.modo === m) { S.view = 'lista'; render(); window.scrollTo(0, 0); return; }
+    if (!S.pins[m]) { S.chiediPin = m; render(); return; }
+    const prima = S.pin;
+    S.pin = S.pins[m];
+    try { await call('stato', null, true); } catch (e) {
+      // PIN cambiato nel foglio: lo richiedo
+      S.pin = prima;
+      S.pins[m] = '';
+      LS.set('pin_' + m, '');
+      S.chiediPin = m;
+      render();
+      return;
+    }
+    LS.set('pin', S.pin);
+    S.chiediPin = null;
+    S.view = 'lista';
+    render();
+    window.scrollTo(0, 0);
+  },
+  async confermaPin(ds) {
+    const prima = S.pin;
+    S.pin = $('pin2').value.trim();
+    try { await call('stato'); } catch (e) { S.pin = prima; return; }
+    ricordaPin();
+    S.chiediPin = null;
+    if (S.d.modo !== ds.m) {
+      toast('Questo PIN apre la modalità ' + nomeModo());
+      render();
+      return;
+    }
+    S.view = 'lista';
+    render();
+    window.scrollTo(0, 0);
   },
   async apriSerata() {
     try { await call('apriSerata', { data: $('dataSerata').value }); } catch (e) { return; }
@@ -766,6 +855,7 @@ document.addEventListener('input', e => {
 document.addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
   if (e.target.id === 'pin' || e.target.id === 'op') ACT.login();
+  if (e.target.id === 'pin2') ACT.confermaPin({ m: S.chiediPin });
 });
 
 // ------------------------------------------------------------ sincronizzazione
@@ -786,7 +876,8 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) aggi
   if (S.pin && S.operatore) {
     try {
       await call('stato', null, true);
-      S.view = 'lista';
+      ricordaPin();
+      S.view = 'menu';
     } catch (e) {
       S.view = 'login';
     }
