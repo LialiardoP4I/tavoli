@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0f1222">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>
+  :root {
+    --bg: #0f1222; --card: #1a1f38; --card2: #262d50; --text: #f2f3f8; --muted: #9aa1c3;
+    --accent: #5b7cff; --ok: #2ecc8f; --bad: #ff5d6c; --warn: #ffb84d; --line: #2c3459;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 16px/1.4 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line);
+    padding: 12px 16px; display: flex; align-items: center; gap: 10px; }
+  header h1 { flex: 1; margin: 0; font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  main { max-width: 640px; margin: 0 auto; padding: 14px 16px 120px; }
+  .btn { border: 0; border-radius: 12px; padding: 14px 16px; font-size: 16px; font-weight: 600; background: var(--card2); }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn.okb { background: var(--ok); color: #04210f; }
+  .btn.danger { background: transparent; color: var(--bad); border: 1px solid var(--bad); }
+  .btn.block { display: block; width: 100%; }
+  .btn.small { padding: 8px 12px; font-size: 14px; }
+  .btn.huge { padding: 22px 16px; font-size: 20px; }
+  .btn:disabled { opacity: .45; }
+  .back { background: none; border: 0; font-size: 26px; line-height: 1; padding: 0 6px 0 0; }
+  .card { background: var(--card); border-radius: 14px; padding: 14px; margin-bottom: 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .tav { border: 0; text-align: left; background: var(--card); border-radius: 14px; padding: 14px; min-height: 100px;
+    display: flex; flex-direction: column; gap: 2px; }
+  .tav .n { font-size: 22px; font-weight: 800; }
+  .tav .nome { font-weight: 600; word-break: break-word; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .kpis.tre { grid-template-columns: 1fr 1fr 1fr; }
+  .kpis .card { margin: 0; }
+  .kpi { font-size: 22px; font-weight: 700; }
+  .cat { margin: 18px 0 8px; color: var(--muted); text-transform: uppercase; font-size: 13px; letter-spacing: .06em; }
+  .item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--card); border-radius: 12px;
+    margin-bottom: 8px; border: 2px solid transparent; }
+  .item.sel { border-color: var(--accent); }
+  .item .name { flex: 1; }
+  .step { display: flex; align-items: center; gap: 6px; }
+  .step button { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--card2); font-size: 22px; font-weight: 700; }
+  .step .q { min-width: 26px; text-align: center; font-weight: 700; font-size: 18px; }
+  .step.big button { width: 60px; height: 60px; font-size: 28px; }
+  .step.big .q { min-width: 60px; font-size: 34px; }
+  .footer { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; background: var(--bg); border-top: 1px solid var(--line);
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
+  .footer .inner { max-width: 640px; margin: 0 auto; display: flex; gap: 10px; align-items: center; }
+  .footer .inner > .btn { flex: 1; }
+  .tab.on { background: var(--accent); color: #fff; }
+  label { display: block; margin: 12px 0 6px; color: var(--muted); font-size: 14px; }
+  input, textarea { width: 100%; padding: 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg);
+    color: var(--text); font: inherit; font-size: 18px; }
+  textarea { font-size: 16px; min-height: 60px; }
+  .nt { display: grid; grid-template-columns: 80px 1fr 40px; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .nt input { padding: 12px; }
+  .nt .x { background: none; border: 0; color: var(--muted); font-size: 22px; }
+  .ordine.annullato { opacity: .45; }
+  .ordine.annullato .det { text-decoration: line-through; }
+  .det { margin: 6px 0; font-weight: 600; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--card2); font-size: 12px; white-space: nowrap; }
+  .badge.modo { background: var(--accent); color: #fff; text-transform: uppercase; letter-spacing: .05em; }
+  .pos { color: var(--ok); } .neg { color: var(--bad); } .warn { color: var(--warn); }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { padding: 8px 4px; border-bottom: 1px solid var(--line); text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; font-size: 13px; }
+  .quick { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .sync { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); flex: none; }
+  .sync.busy { background: var(--warn); } .sync.off { background: var(--bad); }
+  .toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 20; max-width: 90%;
+    background: var(--bad); color: #fff; padding: 10px 16px; border-radius: 10px; font-weight: 600; }
+  .toast.ok { background: var(--ok); color: #04210f; }
+  .big { font-size: 28px; font-weight: 800; }
+  .empty { text-align: center; color: var(--muted); padding: 30px 0; }
+  .avviso { background: rgba(255, 184, 77, .12); border: 1px solid var(--warn); color: var(--warn); border-radius: 12px;
+    padding: 10px 12px; margin-top: 10px; font-size: 14px; }
+</style>
+</head>
+<body>
+<header id="hdr"></header>
+<main id="app"><p class="empty">Caricamento…</p></main>
+<div id="foot"></div>
+
+<script>
+// ------------------------------------------------------------ stato
+const LS = {
+  get(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+};
+
+const S = {
+  pin: LS.get('pin'),
+  operatore: LS.get('operatore'),
+  d: null,              // dati dal server (d.modo = 'tavoli' | 'ingressi')
+  view: 'login',        // login | noSerata | nuoviTavoli | lista | tavolo | ordine | ingresso | riepilogo
+  tavoloId: null,
+  nuovi: null,          // righe della pagina inserimento tavoli: [{numero, nome}]
+  ordine: null,         // { id, step, qta: {bottigliaId: n}, contanti, carta, drink, note }
+  persone: 1,           // modalità ingressi
+  busy: false,
+  sync: 'ok',
+};
+
+// ------------------------------------------------------------ server
+// Fuori da Google (GitHub Pages) l'app parla con lo script via POST; dentro Apps Script usa google.script.run.
+const API_URL = 'https://script.google.com/macros/s/AKfycbwuCVVV7z-pCK_GDnnrWnW6b86ixKmmTbptEmsaY8MKPHbTqaL2pZjnon6nYmMcqfDx1g/exec';
+
+function api(action, payload) {
+  if (window.google && google.script && google.script.run) {
+    return new Promise((res, rej) => {
+      google.script.run.withSuccessHandler(res).withFailureHandler(rej).api(action, payload || {}, S.pin);
+    });
+  }
+  return fetch(API_URL, {
+    method: 'POST',
+    body: JSON.stringify({ action, payload: payload || {}, pin: S.pin }),
+  })
+    .then(r => { if (!r.ok) throw new Error('Errore di connessione (' + r.status + ')'); return r.json(); })
+    .then(r => { if (!r.ok) throw new Error(r.error); return r.data; });
+}
+
+async function call(action, payload, silent) {
+  setSync('busy');
+  try {
+    S.d = await api(action, payload);
+    setSync('ok');
+    return S.d;
+  } catch (e) {
+    setSync('off');
+    if (!silent) toast(errMsg(e));
+    throw e;
+  }
+}
+
+function errMsg(e) {
+  const m = (e && e.message) || String(e);
+  return m.replace(/^Error:\s*/, '') || 'Errore di connessione';
+}
+
+function setSync(s) {
+  S.sync = s;
+  const el = document.querySelector('.sync');
+  if (el) el.className = 'sync ' + s;
+}
+
+// ------------------------------------------------------------ utilità
+const $ = id => document.getElementById(id);
+const esc = s => String(s === undefined || s === null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const num = v => Number(String(v === undefined || v === null ? '' : v).replace(',', '.')) || 0;
+const eur = n => '€ ' + (Math.round(num(n) * 100) / 100).toLocaleString('it-IT', { maximumFractionDigits: 2 });
+const fmtData = iso => { const p = String(iso || '').slice(0, 10).split('-'); return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : ''; };
+const ora = iso => String(iso || '').slice(11, 16);
+const oggi = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+const nuovoId = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const diffHtml = n => n === 0 ? eur(0) : '<span class="' + (n > 0 ? 'pos' : 'neg') + '">' + (n > 0 ? '+' : '−') + eur(Math.abs(n)) + '</span>';
+const isTavoli = () => S.d && S.d.modo === 'tavoli';
+const nomeModo = () => isTavoli() ? 'Tavoli' : 'Ingressi';
+
+let toastTimer;
+function toast(msg, ok) {
+  let el = document.querySelector('.toast');
+  if (!el) { el = document.createElement('div'); document.body.appendChild(el); }
+  el.className = 'toast' + (ok ? ' ok' : '');
+  el.textContent = msg;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.remove(), ok ? 1800 : 4000);
+}
+
+const attivi = xs => xs.filter(x => x.stato !== 'annullato');
+const ordiniTavolo = id => S.d.ordini.filter(o => o.tavolo_id === id);
+const ingressiTavolo = id => S.d.ingressi.filter(x => x.tavolo_id === id);
+const tavolo = () => S.d.tavoli.find(t => t.id === S.tavoloId);
+
+function sommaOrdini(ordini) {
+  return attivi(ordini).reduce((a, o) => {
+    a.n += 1;
+    a.bott += num(o.n_bottiglie);
+    a.listino += num(o.totale_listino);
+    a.contanti += num(o.contanti);
+    a.carta += num(o.carta);
+    a.drink += num(o.n_drink);
+    a.valDrink += num(o.valore_drink);
+    a.pagato += num(o.totale_pagato);
+    return a;
+  }, { n: 0, bott: 0, listino: 0, contanti: 0, carta: 0, drink: 0, valDrink: 0, pagato: 0 });
+}
+
+function sommaIngressi(ingressi) {
+  return attivi(ingressi).reduce((a, x) => {
+    a.persone += num(x.persone);
+    a.importo += num(x.importo);
+    a.drink += num(x.drink);
+    if (x.metodo === 'POS') a.pos += num(x.importo); else a.contanti += num(x.importo);
+    return a;
+  }, { persone: 0, importo: 0, drink: 0, contanti: 0, pos: 0 });
+}
+
+/** Drink da ingressi del tavolo: disponibili, usate negli ordini, residue. */
+function drinkTavolo(id) {
+  const disp = sommaIngressi(ingressiTavolo(id)).drink;
+  const usate = sommaOrdini(ordiniTavolo(id)).drink;
+  return { disp, usate, residue: disp - usate };
+}
+
+function totaleCarrello() {
+  const o = S.ordine;
+  let listino = 0, pezzi = 0;
+  S.d.bottiglie.forEach(b => { const q = o.qta[b.id] || 0; listino += q * b.prezzo; pezzi += q; });
+  return { listino, pezzi };
+}
+
+function pagatoOrdine() {
+  const o = S.ordine;
+  return num(o.contanti) + num(o.carta) + (o.drink || 0) * S.d.valoreDrink;
+}
+
+// ------------------------------------------------------------ viste
+const hdr = (title, back) =>
+  (back ? '<button class="back" data-act="' + back + '" aria-label="Indietro">‹</button>' : '') +
+  '<h1>' + title + '</h1>' +
+  (S.d && S.view !== 'login' ? '<span class="badge modo">' + nomeModo() + '</span>' : '') +
+  '<span class="sync ' + S.sync + '" title="Sincronizzazione"></span>';
+
+const nav = cur =>
+  '<button class="btn tab' + (cur === 'lista' ? ' on' : '') + '" data-act="vai" data-v="lista">' + nomeModo() + '</button>' +
+  '<button class="btn tab' + (cur === 'riepilogo' ? ' on' : '') + '" data-act="vai" data-v="riepilogo">Riepilogo</button>';
+
+const esci = () => `<p class="muted" style="text-align:center">Operatore: ${esc(S.operatore)} · modalità ${nomeModo()} ·
+  <a href="#" data-act="esci" style="color:var(--muted)">esci</a></p>`;
+
+const VIEWS = {
+  login() {
+    return {
+      header: hdr('Gestione Tavoli'),
+      body: `<div class="card">
+        <label for="op">Il tuo nome</label>
+        <input id="op" value="${esc(S.operatore)}" placeholder="es. Marco" autocomplete="off">
+        <label for="pin">PIN</label>
+        <input id="pin" type="password" value="${esc(S.pin)}" autocomplete="off" autocapitalize="off">
+        <p class="muted">Il PIN decide la modalità: Tavoli o Ingressi.</p>
+        <button class="btn primary block" style="margin-top:8px" data-act="login">Entra</button>
+      </div>`,
+    };
+  },
+
+  noSerata() {
+    return {
+      header: hdr('Nessuna serata aperta'),
+      body: `<div class="card">
+        <label for="dataSerata">Data della serata</label>
+        <input id="dataSerata" type="date" value="${oggi()}">
+        <button class="btn primary block" style="margin-top:18px" data-act="apriSerata">Apri serata</button>
+      </div>${esci()}`,
+    };
+  },
+
+  nuoviTavoli() {
+    const primi = !S.d.tavoli.length;
+    const righe = S.nuovi.map((t, i) => `<div class="nt">
+        <input data-nt="${i}" data-f="numero" value="${esc(t.numero)}" placeholder="N°" inputmode="text" autocomplete="off">
+        <input data-nt="${i}" data-f="nome" value="${esc(t.nome)}" placeholder="Nome" autocomplete="off">
+        <button class="x" data-act="togliRiga" data-i="${i}" aria-label="Togli riga">×</button>
+      </div>`).join('');
+    return {
+      header: hdr(primi ? 'Tavoli della serata' : 'Aggiungi tavoli', primi ? null : 'vai" data-v="lista'),
+      body: `<p class="muted" style="margin-top:0">Inserisci numero e nome di ogni tavolo. Le righe vuote vengono ignorate.</p>
+        <div class="row muted" style="padding:0 2px 6px"><span style="width:80px">Numero</span><span style="flex:1">Nome</span></div>
+        ${righe}
+        <button class="btn block" data-act="aggiungiRiga">+ Altra riga</button>
+        ${primi ? esci() : ''}`,
+      footer: `<button class="btn primary" data-act="salvaTavoli"${S.busy ? ' disabled' : ''}>${S.busy ? 'Salvataggio…' : 'Salva tavoli'}</button>`,
+    };
+  },
+
+  lista() {
+    const cards = S.d.tavoli.map(t => {
+      const testa = `<span class="n">${esc(t.numero !== '' && t.numero !== undefined ? t.numero : t.nome)}</span>
+        ${t.numero !== '' && t.numero !== undefined && t.nome ? `<span class="nome">${esc(t.nome)}</span>` : ''}`;
+      if (isTavoli()) {
+        const s = sommaOrdini(ordiniTavolo(t.id));
+        const d = drinkTavolo(t.id);
+        return `<button class="tav" data-act="apriTavolo" data-id="${esc(t.id)}">${testa}
+          <span class="muted">${s.n} ordini · ${s.bott} bott.</span>
+          <span>${eur(s.pagato)} <span class="muted">/ ${eur(s.listino)}</span></span>
+          ${d.disp ? `<span class="muted${d.residue < 0 ? ' neg' : ''}">Drink ingressi: ${d.residue}/${d.disp}</span>` : ''}
+        </button>`;
+      }
+      const s = sommaIngressi(ingressiTavolo(t.id));
+      return `<button class="tav" data-act="apriTavolo" data-id="${esc(t.id)}">${testa}
+        <span class="kpi">${s.persone} <span class="muted">persone</span></span>
+        <span class="muted">${eur(s.importo)}</span>
+      </button>`;
+    }).join('');
+
+    let kpi;
+    if (isTavoli()) {
+      const tot = sommaOrdini(S.d.ordini);
+      kpi = `<div class="card"><div class="muted">Pagato</div><div class="kpi">${eur(tot.pagato)}</div></div>
+        <div class="card"><div class="muted">Listino</div><div class="kpi">${eur(tot.listino)}</div></div>`;
+    } else {
+      const tot = sommaIngressi(S.d.ingressi);
+      kpi = `<div class="card"><div class="muted">Persone</div><div class="kpi">${tot.persone}</div></div>
+        <div class="card"><div class="muted">Incasso</div><div class="kpi">${eur(tot.importo)}</div></div>`;
+    }
+
+    return {
+      header: hdr('Serata ' + fmtData(S.d.serata.data)),
+      body: `<div class="kpis">${kpi}</div>
+        <button class="btn block" style="margin-bottom:14px" data-act="nuoviTavoli">+ Aggiungi tavoli</button>
+        ${cards ? `<div class="grid">${cards}</div>` : '<p class="empty">Nessun tavolo.</p>'}`,
+      footer: nav('lista'),
+    };
+  },
+
+  // Modalità Tavoli: ordini del tavolo
+  tavolo() {
+    const t = tavolo();
+    const ordini = ordiniTavolo(t.id).slice().reverse();
+    const s = sommaOrdini(ordini);
+    const d = drinkTavolo(t.id);
+    const lista = ordini.map(o => {
+      const pag = [];
+      if (num(o.contanti)) pag.push('Contanti ' + eur(o.contanti));
+      if (num(o.carta)) pag.push('Carta ' + eur(o.carta));
+      if (num(o.n_drink)) pag.push(o.n_drink + ' drink (' + eur(o.valore_drink) + ')');
+      const ann = o.stato === 'annullato';
+      return `<div class="card ordine${ann ? ' annullato' : ''}">
+        <div class="row"><b>${ora(o.timestamp)}</b><span class="muted" style="flex:1">${esc(o.operatore)}</span>
+          <span class="badge">${ann ? 'ANNULLATO' : esc(o.metodo)}</span></div>
+        <div class="det">${esc(o.dettaglio)}</div>
+        <div class="row"><span>Listino ${eur(o.totale_listino)}</span><span>Pagato <b>${eur(o.totale_pagato)}</b></span></div>
+        ${pag.length ? `<div class="muted">${pag.join(' · ')}</div>` : ''}
+        ${o.note ? `<div class="muted">Nota: ${esc(o.note)}</div>` : ''}
+        ${ann ? '' : `<div style="text-align:right;margin-top:8px"><button class="btn danger small" data-act="annullaOrdine" data-id="${esc(o.id)}">Annulla ordine</button></div>`}
+      </div>`;
+    }).join('');
+
+    return {
+      header: hdr('Tavolo ' + esc(t.etichetta), 'vai" data-v="lista'),
+      body: `<div class="kpis">
+          <div class="card"><div class="muted">Pagato</div><div class="kpi">${eur(s.pagato)}</div></div>
+          <div class="card"><div class="muted">Listino</div><div class="kpi">${eur(s.listino)}</div></div>
+        </div>
+        <div class="card">
+          <div class="row"><span>Drink da ingressi</span><b>${d.disp}</b></div>
+          <div class="row"><span>Drink usate negli ordini</span><b>${d.usate}</b></div>
+          <div class="row"><span>Drink residue</span><b class="${d.residue < 0 ? 'neg' : 'pos'}">${d.residue}</b></div>
+          ${d.residue < 0 ? '<div class="avviso">Usate più drink di quelle portate dagli ingressi.</div>' : ''}
+        </div>
+        ${lista || '<p class="empty">Nessun ordine per questo tavolo.</p>'}
+        <button class="btn danger block" style="margin-top:24px" data-act="eliminaTavolo">Elimina tavolo</button>`,
+      footer: '<button class="btn primary" data-act="nuovoOrdine">+ Nuovo ordine</button>',
+    };
+  },
+
+  // Modalità Ingressi: persone del tavolo
+  ingresso() {
+    const t = tavolo();
+    const xs = ingressiTavolo(t.id).slice().reverse();
+    const s = sommaIngressi(xs);
+    const importo = S.persone * S.d.prezzoIngresso;
+    const lista = xs.map(x => {
+      const ann = x.stato === 'annullato';
+      return `<div class="card ordine${ann ? ' annullato' : ''}">
+        <div class="row"><b>${ora(x.timestamp)}</b><span class="muted" style="flex:1">${esc(x.operatore)}</span>
+          <span class="badge">${ann ? 'ANNULLATO' : esc(x.metodo)}</span></div>
+        <div class="row det"><span>${x.persone} ${num(x.persone) === 1 ? 'persona' : 'persone'}</span><span>${eur(x.importo)}</span></div>
+        ${ann ? '' : `<div style="text-align:right"><button class="btn danger small" data-act="annullaIngresso" data-id="${esc(x.id)}">Annulla</button></div>`}
+      </div>`;
+    }).join('');
+
+    return {
+      header: hdr('Tavolo ' + esc(t.etichetta), 'vai" data-v="lista'),
+      body: `<div class="kpis tre">
+          <div class="card"><div class="muted">Persone</div><div class="kpi">${s.persone}</div></div>
+          <div class="card"><div class="muted">Incasso</div><div class="kpi">${eur(s.importo)}</div></div>
+          <div class="card"><div class="muted">Drink</div><div class="kpi">${s.drink}</div></div>
+        </div>
+        <div class="card" style="text-align:center">
+          <div class="muted">Persone che entrano ora</div>
+          <div class="step big" style="justify-content:center;margin:10px 0">
+            <button data-act="persone" data-d="-1" aria-label="Meno">−</button>
+            <span class="q">${S.persone}</span>
+            <button data-act="persone" data-d="1" aria-label="Più">+</button>
+          </div>
+          <div class="muted">${S.persone} × ${eur(S.d.prezzoIngresso)} = <b style="color:var(--text)">${eur(importo)}</b></div>
+          <div class="row" style="margin-top:14px">
+            <button class="btn okb huge" style="flex:1" data-act="ingresso" data-m="Contanti"${S.busy ? ' disabled' : ''}>Contanti</button>
+            <button class="btn primary huge" style="flex:1" data-act="ingresso" data-m="POS"${S.busy ? ' disabled' : ''}>POS</button>
+          </div>
+        </div>
+        ${lista ? '<div class="cat">Ingressi registrati</div>' + lista : ''}
+        <button class="btn danger block" style="margin-top:24px" data-act="eliminaTavolo">Elimina tavolo</button>`,
+    };
+  },
+
+  ordine() {
+    const o = S.ordine;
+    const t = tavolo();
+    const tot = totaleCarrello();
+
+    if (o.step === 1) {
+      const cats = [];
+      S.d.bottiglie.forEach(b => { if (!cats.includes(b.categoria)) cats.push(b.categoria); });
+      const body = cats.map(c => '<div class="cat">' + esc(c) + '</div>' +
+        S.d.bottiglie.filter(b => b.categoria === c).map(b => {
+          const q = o.qta[b.id] || 0;
+          return `<div class="item${q ? ' sel' : ''}">
+            <div class="name">${esc(b.nome)}<div class="muted">${eur(b.prezzo)}</div></div>
+            <div class="step">
+              <button data-act="qta" data-id="${esc(b.id)}" data-d="-1" aria-label="Togli">−</button>
+              <span class="q">${q}</span>
+              <button data-act="qta" data-id="${esc(b.id)}" data-d="1" aria-label="Aggiungi">+</button>
+            </div>
+          </div>`;
+        }).join('')).join('');
+      return {
+        header: hdr('Ordine · ' + esc(t.etichetta), 'esciOrdine'),
+        body: body || '<p class="empty">Listino vuoto: aggiungi bottiglie nel foglio "Bottiglie".</p>',
+        footer: `<div style="flex:1"><div class="muted">${tot.pezzi} bottiglie</div><div class="kpi">${eur(tot.listino)}</div></div>
+          <button class="btn primary" data-act="avanti"${tot.pezzi ? '' : ' disabled'}>Pagamento ›</button>`,
+      };
+    }
+
+    const d = drinkTavolo(t.id);
+    const righe = S.d.bottiglie.filter(b => o.qta[b.id]).map(b =>
+      `<div class="row"><span>${o.qta[b.id]}× ${esc(b.nome)}</span><span>${eur(o.qta[b.id] * b.prezzo)}</span></div>`).join('');
+    return {
+      header: hdr('Pagamento · ' + esc(t.etichetta), 'indietro'),
+      body: `<div class="card">${righe}
+          <div class="row" style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+            <span>Totale listino</span><span class="big">${eur(tot.listino)}</span></div>
+        </div>
+        <div class="card">
+          <label for="contanti">Contanti (€)</label>
+          <input id="contanti" data-pag="contanti" inputmode="decimal" placeholder="0" value="${esc(o.contanti)}">
+          <label for="carta">Carta (€)</label>
+          <input id="carta" data-pag="carta" inputmode="decimal" placeholder="0" value="${esc(o.carta)}">
+          <label>Drink (1 drink = ${eur(S.d.valoreDrink)}) · residue da ingressi: <b>${d.residue}</b></label>
+          <div class="row">
+            <div class="step">
+              <button data-act="drink" data-d="-1" aria-label="Togli drink">−</button>
+              <span class="q">${o.drink}</span>
+              <button data-act="drink" data-d="1" aria-label="Aggiungi drink">+</button>
+            </div>
+            <span id="valDrink">${eur(o.drink * S.d.valoreDrink)}</span>
+          </div>
+          <div id="drinkAvviso"></div>
+          <div class="quick">
+            <button class="btn small" data-act="tutto" data-m="contanti">Tutto contanti</button>
+            <button class="btn small" data-act="tutto" data-m="carta">Tutto carta</button>
+            <button class="btn small" data-act="tutto" data-m="drink">Tutto drink</button>
+            <button class="btn small" data-act="tutto" data-m="azzera">Azzera</button>
+          </div>
+        </div>
+        <div class="card" id="pagSummary"></div>
+        <label for="nota">Note (facoltative)</label>
+        <textarea id="nota" data-pag="note" placeholder="es. sconto amico, omaggio…">${esc(o.note)}</textarea>`,
+      footer: `<button class="btn primary" data-act="conferma"${S.busy ? ' disabled' : ''}>${S.busy ? 'Salvataggio…' : 'Conferma ordine'}</button>`,
+      after: aggiornaPag,
+    };
+  },
+
+  riepilogo() {
+    const o = sommaOrdini(S.d.ordini);
+    const g = sommaIngressi(S.d.ingressi);
+    const perTavolo = S.d.tavoli.map(t => {
+      const s = sommaOrdini(ordiniTavolo(t.id));
+      const i = sommaIngressi(ingressiTavolo(t.id));
+      const d = drinkTavolo(t.id);
+      return `<tr><td>${esc(t.etichetta)}</td><td>${i.persone}</td><td>${eur(s.pagato)}</td>
+        <td>${eur(s.listino)}</td><td class="${d.residue < 0 ? 'neg' : ''}">${d.usate}/${d.disp}</td></tr>`;
+    }).join('');
+
+    const perBott = {};
+    S.d.righe.forEach(r => {
+      const k = r.bottiglia;
+      perBott[k] = perBott[k] || { qta: 0, tot: 0 };
+      perBott[k].qta += num(r.qta);
+      perBott[k].tot += num(r.totale);
+    });
+    const bott = Object.keys(perBott).sort((a, b) => perBott[b].qta - perBott[a].qta)
+      .map(k => `<tr><td>${esc(k)}</td><td>${perBott[k].qta}</td><td>${eur(perBott[k].tot)}</td></tr>`).join('');
+
+    return {
+      header: hdr('Riepilogo ' + fmtData(S.d.serata.data)),
+      body: `<div class="cat" style="margin-top:0">Ingressi</div>
+        <div class="kpis">
+          <div class="card"><div class="muted">Persone</div><div class="kpi">${g.persone}</div></div>
+          <div class="card"><div class="muted">Incasso ingressi</div><div class="kpi">${eur(g.importo)}</div></div>
+        </div>
+        <div class="card">
+          <div class="row"><span>Contanti</span><b>${eur(g.contanti)}</b></div>
+          <div class="row"><span>POS</span><b>${eur(g.pos)}</b></div>
+          <div class="row"><span>Drink date ai tavoli</span><b>${g.drink}</b></div>
+        </div>
+        <div class="cat">Tavoli</div>
+        <div class="kpis">
+          <div class="card"><div class="muted">Pagato</div><div class="kpi">${eur(o.pagato)}</div></div>
+          <div class="card"><div class="muted">Listino</div><div class="kpi">${eur(o.listino)}</div></div>
+          <div class="card"><div class="muted">Differenza</div><div class="kpi">${diffHtml(o.pagato - o.listino)}</div></div>
+          <div class="card"><div class="muted">Bottiglie</div><div class="kpi">${o.bott}</div></div>
+        </div>
+        <div class="card">
+          <div class="row"><span>Contanti</span><b>${eur(o.contanti)}</b></div>
+          <div class="row"><span>Carta</span><b>${eur(o.carta)}</b></div>
+          <div class="row"><span>Drink usate (${o.drink})</span><b>${eur(o.valDrink)}</b></div>
+          <div class="row"><span>Drink residue</span><b class="${g.drink - o.drink < 0 ? 'neg' : ''}">${g.drink - o.drink}</b></div>
+        </div>
+        <div class="cat">Per tavolo</div>
+        <div class="card">${perTavolo
+          ? `<table><tr><th>Tavolo</th><th>Pers.</th><th>Pagato</th><th>Listino</th><th>Drink</th></tr>${perTavolo}</table>
+             <p class="muted" style="margin-bottom:0">Drink = usate / da ingressi</p>`
+          : '<span class="muted">Nessun tavolo</span>'}</div>
+        <div class="cat">Per bottiglia</div>
+        <div class="card">${bott
+          ? `<table><tr><th>Bottiglia</th><th>Qtà</th><th>Listino</th></tr>${bott}</table>`
+          : '<span class="muted">Nessuna bottiglia venduta</span>'}</div>
+        <button class="btn danger block" style="margin-top:24px" data-act="chiudiSerata">Chiudi serata</button>
+        ${esci()}`,
+      footer: nav('riepilogo'),
+    };
+  },
+};
+
+function render() {
+  if (S.view !== 'login') {
+    if (!S.d.serata) S.view = 'noSerata';
+    else if (S.view === 'noSerata' || (S.view === 'lista' && !S.d.tavoli.length)) {
+      S.nuovi = S.nuovi || righeVuote();
+      S.view = 'nuoviTavoli';
+    }
+    if (['tavolo', 'ordine', 'ingresso'].includes(S.view) && !tavolo()) S.view = 'lista';
+    if (S.view === 'tavolo' && !isTavoli()) S.view = 'ingresso';
+    if (S.view === 'ingresso' && isTavoli()) S.view = 'tavolo';
+  }
+  const v = VIEWS[S.view]();
+  $('hdr').innerHTML = v.header;
+  $('app').innerHTML = v.body;
+  $('foot').innerHTML = v.footer ? '<div class="footer"><div class="inner">' + v.footer + '</div></div>' : '';
+  if (v.after) v.after();
+}
+
+const righeVuote = () => Array.from({ length: 5 }, () => ({ numero: '', nome: '' }));
+
+function aggiornaPag() {
+  const box = $('pagSummary');
+  if (!box) return;
+  const listino = totaleCarrello().listino;
+  const pagato = pagatoOrdine();
+  const residue = drinkTavolo(S.tavoloId).residue;
+  $('valDrink').textContent = eur(S.ordine.drink * S.d.valoreDrink);
+  $('drinkAvviso').innerHTML = S.ordine.drink > residue
+    ? `<div class="avviso">Attenzione: ${S.ordine.drink} drink ma il tavolo ne ha ${residue} residue dagli ingressi.</div>` : '';
+  box.innerHTML = `<div class="row"><span>Totale pagato</span><span class="big">${eur(pagato)}</span></div>
+    <div class="row"><span class="muted">Differenza su listino</span><span>${diffHtml(pagato - listino)}</span></div>`;
+}
+
+// ------------------------------------------------------------ azioni
+const ACT = {
+  async login() {
+    S.operatore = $('op').value.trim();
+    S.pin = $('pin').value.trim();
+    if (!S.operatore) return toast('Inserisci il tuo nome');
+    try { await call('stato'); } catch (e) { return; }
+    LS.set('operatore', S.operatore);
+    LS.set('pin', S.pin);
+    S.view = 'lista';
+    render();
+  },
+  esci() {
+    S.pin = '';
+    LS.set('pin', '');
+    S.view = 'login';
+    render();
+  },
+  async apriSerata() {
+    try { await call('apriSerata', { data: $('dataSerata').value }); } catch (e) { return; }
+    S.view = 'lista';
+    render();
+  },
+  async chiudiSerata() {
+    if (!confirm('Chiudere la serata?\n\nIl riepilogo viene salvato sul foglio e non si potranno più registrare ordini o ingressi.')) return;
+    try { await call('chiudiSerata', { serataId: S.d.serata.id }); } catch (e) { return; }
+    toast('Serata chiusa e salvata', true);
+    render();
+  },
+  vai(ds) { S.view = ds.v; render(); window.scrollTo(0, 0); },
+
+  nuoviTavoli() { S.nuovi = righeVuote(); S.view = 'nuoviTavoli'; render(); window.scrollTo(0, 0); },
+  aggiungiRiga() { S.nuovi.push({ numero: '', nome: '' }); render(); },
+  togliRiga(ds) { S.nuovi.splice(Number(ds.i), 1); if (!S.nuovi.length) S.nuovi.push({ numero: '', nome: '' }); render(); },
+  async salvaTavoli() {
+    const tavoli = S.nuovi.filter(t => t.numero.trim() || t.nome.trim());
+    if (!tavoli.length) return toast('Inserisci almeno un tavolo');
+    if (tavoli.some(t => !t.numero.trim())) return toast('Ogni tavolo deve avere un numero');
+    S.busy = true;
+    render();
+    try {
+      await call('creaTavoli', { serataId: S.d.serata.id, tavoli, operatore: S.operatore });
+    } catch (e) {
+      S.busy = false;
+      render();
+      return;
+    }
+    S.busy = false;
+    S.nuovi = null;
+    S.view = 'lista';
+    toast(tavoli.length === 1 ? 'Tavolo salvato' : tavoli.length + ' tavoli salvati', true);
+    render();
+  },
+
+  apriTavolo(ds) {
+    S.tavoloId = ds.id;
+    S.persone = 1;
+    S.view = isTavoli() ? 'tavolo' : 'ingresso';
+    render();
+    window.scrollTo(0, 0);
+  },
+  async eliminaTavolo() {
+    const t = tavolo();
+    const s = sommaOrdini(ordiniTavolo(t.id));
+    const i = sommaIngressi(ingressiTavolo(t.id));
+    const cosa = [];
+    if (s.n) cosa.push(s.n + ' ordini (' + eur(s.pagato) + ')');
+    if (i.persone) cosa.push(i.persone + ' ingressi (' + eur(i.importo) + ')');
+    const msg = 'Eliminare il tavolo ' + t.etichetta + '?' +
+      (cosa.length ? '\n\nHa ' + cosa.join(' e ') + ': verranno annullati e non conteranno nei totali.' : '');
+    if (!confirm(msg)) return;
+    try { await call('eliminaTavolo', { serataId: S.d.serata.id, tavoloId: t.id }); } catch (e) { return; }
+    S.view = 'lista';
+    toast('Tavolo eliminato', true);
+    render();
+    window.scrollTo(0, 0);
+  },
+
+  // --- ingressi
+  persone(ds) { S.persone = Math.max(1, Math.min(50, S.persone + Number(ds.d))); render(); },
+  async ingresso(ds) {
+    if (S.busy) return;
+    S.busy = true;
+    render();
+    const persone = S.persone;
+    try {
+      await call('creaIngresso', {
+        id: nuovoId('I'), serataId: S.d.serata.id, tavoloId: S.tavoloId,
+        persone, metodo: ds.m, operatore: S.operatore,
+      });
+    } catch (e) {
+      S.busy = false;
+      render();
+      return;
+    }
+    S.busy = false;
+    S.persone = 1;
+    toast('+' + persone + ' ' + (persone === 1 ? 'persona' : 'persone') + ' · ' + ds.m, true);
+    render();
+  },
+  async annullaIngresso(ds) {
+    if (!confirm('Annullare questo ingresso?')) return;
+    try { await call('annullaIngresso', { ingressoId: ds.id }); } catch (e) { return; }
+    render();
+  },
+
+  // --- ordini
+  async annullaOrdine(ds) {
+    if (!confirm('Annullare questo ordine?')) return;
+    try { await call('annullaOrdine', { ordineId: ds.id }); } catch (e) { return; }
+    render();
+  },
+  nuovoOrdine() {
+    S.ordine = { id: nuovoId('O'), step: 1, qta: {}, contanti: '', carta: '', drink: 0, note: '' };
+    S.view = 'ordine';
+    render();
+    window.scrollTo(0, 0);
+  },
+  esciOrdine() {
+    if (totaleCarrello().pezzi && !confirm('Uscire senza salvare l\'ordine?')) return;
+    S.ordine = null;
+    S.view = 'tavolo';
+    render();
+  },
+  qta(ds) {
+    const q = Math.max(0, (S.ordine.qta[ds.id] || 0) + Number(ds.d));
+    if (q) S.ordine.qta[ds.id] = q; else delete S.ordine.qta[ds.id];
+    render();
+  },
+  avanti() { S.ordine.step = 2; render(); window.scrollTo(0, 0); },
+  indietro() { S.ordine.step = 1; render(); },
+  drink(ds) {
+    S.ordine.drink = Math.max(0, S.ordine.drink + Number(ds.d));
+    render();
+  },
+  tutto(ds) {
+    const o = S.ordine;
+    const listino = totaleCarrello().listino;
+    o.contanti = ''; o.carta = ''; o.drink = 0;
+    if (ds.m === 'contanti') o.contanti = String(listino);
+    if (ds.m === 'carta') o.carta = String(listino);
+    if (ds.m === 'drink') o.drink = Math.ceil(listino / S.d.valoreDrink);
+    render();
+  },
+  async conferma() {
+    const o = S.ordine;
+    for (const k of ['contanti', 'carta']) {
+      const v = String(o[k]).trim();
+      if (v && !/^\d+([.,]\d{1,2})?$/.test(v)) return toast('Importo ' + k + ' non valido');
+    }
+    if (pagatoOrdine() === 0 && !confirm('Totale pagato € 0. Confermare comunque?')) return;
+    const residue = drinkTavolo(S.tavoloId).residue;
+    if (o.drink > residue && !confirm('Il tavolo ha solo ' + residue + ' drink residue dagli ingressi, ne stai usando ' + o.drink + '. Confermare comunque?')) return;
+    S.busy = true;
+    render();
+    try {
+      await call('creaOrdine', {
+        id: o.id,
+        serataId: S.d.serata.id,
+        tavoloId: S.tavoloId,
+        righe: Object.keys(o.qta).map(id => ({ bottigliaId: id, qta: o.qta[id] })),
+        contanti: o.contanti,
+        carta: o.carta,
+        nDrink: o.drink,
+        note: o.note,
+        operatore: S.operatore,
+      });
+    } catch (e) {
+      S.busy = false;
+      render();
+      return;
+    }
+    S.busy = false;
+    S.ordine = null;
+    S.view = 'tavolo';
+    toast('Ordine salvato', true);
+    render();
+    window.scrollTo(0, 0);
+  },
+};
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]');
+  if (!el || el.disabled) return;
+  e.preventDefault();
+  const fn = ACT[el.dataset.act];
+  if (fn) fn(el.dataset, el);
+});
+
+document.addEventListener('input', e => {
+  const ds = e.target.dataset;
+  if (ds.pag && S.ordine) {
+    S.ordine[ds.pag] = e.target.value;
+    aggiornaPag();
+  }
+  if (ds.nt !== undefined && S.nuovi) S.nuovi[Number(ds.nt)][ds.f] = e.target.value;
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  if (e.target.id === 'pin' || e.target.id === 'op') ACT.login();
+});
+
+// ------------------------------------------------------------ sincronizzazione
+async function aggiorna() {
+  if (S.view === 'login' || S.busy) return;
+  try { await call('stato', null, true); } catch (e) { return; }
+  const typing = ['INPUT', 'TEXTAREA'].includes((document.activeElement || {}).tagName);
+  // Durante un ordine, l'inserimento tavoli o mentre si scrive non ridisegno: i dati arrivano comunque.
+  if (S.view === 'ordine' || S.view === 'nuoviTavoli' || typing) return;
+  render();
+}
+
+setInterval(() => { if (!document.hidden) aggiorna(); }, 8000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) aggiorna(); });
+
+// ------------------------------------------------------------ avvio
+(async function start() {
+  if (S.pin && S.operatore) {
+    try {
+      await call('stato', null, true);
+      S.view = 'lista';
+    } catch (e) {
+      S.view = 'login';
+    }
+  }
+  render();
+})();
+</script>
+</body>
+</html>
