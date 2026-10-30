@@ -93,7 +93,6 @@ const LS = {
 };
 
 const S = {
-  pin: LS.get('pin'),
   operatore: LS.get('operatore'),
   d: null,              // dati dal server
   view: 'login',        // login | menu | noSerata | bar | riepilogo | storico | dettaglio
@@ -119,7 +118,7 @@ function api(action, payload) {
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   return fetch(API_URL, {
     method: 'POST',
-    body: JSON.stringify({ action, payload: payload || {}, pin: S.pin }),
+    body: JSON.stringify({ action, payload: payload || {} }),
     signal: ctrl.signal,
   })
     .then(r => {
@@ -317,8 +316,6 @@ const VIEWS = {
       body: `<div class="card">
         <label for="op">Il tuo nome</label>
         <input id="op" value="${esc(S.operatore)}" placeholder="es. Marco" autocomplete="off">
-        <label for="pin">PIN</label>
-        <input id="pin" type="password" value="${esc(S.pin)}" autocomplete="off" autocapitalize="off">
         <button class="btn primary block" style="margin-top:18px" data-act="login">Entra</button>
       </div>`,
     };
@@ -492,18 +489,14 @@ function aggiornaFooter() {
 const ACT = {
   async login() {
     S.operatore = $('op').value.trim();
-    S.pin = $('pin').value.trim();
     if (!S.operatore) return toast('Inserisci il tuo nome');
     try { await call('stato'); } catch (e) { return; }
     LS.set('operatore', S.operatore);
-    LS.set('pin', S.pin);
     S.view = 'menu';
     render();
   },
   esci() {
     if (!lasciaModifiche()) return;
-    S.pin = '';
-    LS.set('pin', '');
     S.view = 'login';
     render();
   },
@@ -646,7 +639,7 @@ document.addEventListener('input', e => {
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
-  if (e.target.id === 'pin' || e.target.id === 'op') ACT.login();
+  if (e.target.id === 'op') ACT.login();
   // Invio su un campo quantità passa al prodotto successivo
   if (e.target.dataset.q !== undefined) {
     const campi = Array.from(document.querySelectorAll('[data-q]'));
@@ -681,7 +674,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) aggi
 
 // ------------------------------------------------------------ avvio
 (async function start() {
-  if (S.pin && S.operatore) {
+  if (S.operatore) {
     try {
       await call('stato', null, true);
       S.view = 'menu';
