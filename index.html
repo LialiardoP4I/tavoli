@@ -126,9 +126,7 @@ const LS = {
 };
 
 const S = {
-  pin: LS.get('pin'),   // PIN in uso (decide la modalità)
-  pins: { tavoli: LS.get('pin_tavoli'), ingressi: LS.get('pin_ingressi') },  // PIN già usati su questo telefono
-  chiediPin: null,      // modalità per cui il menu sta chiedendo il PIN
+  modo: LS.get('modo') === 'tavoli' ? 'tavoli' : 'ingressi',  // modalità scelta dal menu
   operatore: LS.get('operatore'),
   d: null,              // dati dal server (d.modo = 'tavoli' | 'ingressi')
   view: 'login',        // login | menu | noSerata | nuoviTavoli | lista | tavolo | ordine | ingresso | riepilogo
@@ -138,7 +136,6 @@ const S = {
   persone: 1,           // modalità ingressi
   ingressoId: null,     // id dell'ingresso in corso: resta lo stesso se si ripete dopo un errore
   dataSerata: '',       // data scelta nella pagina "Apri serata"
-  pin2: '',             // PIN digitato nel menu
   zoom: LS.get('zoomMappa') === '1',  // piantina ingrandita (scorrevole)
   busy: false,
   sync: 'ok',
@@ -154,7 +151,7 @@ function api(action, payload) {
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   return fetch(API_URL, {
     method: 'POST',
-    body: JSON.stringify({ action, payload: payload || {}, pin: S.pin }),
+    body: JSON.stringify({ action, payload: payload || {}, modo: S.modo }),
     signal: ctrl.signal,
   })
     .then(r => {
@@ -307,8 +304,6 @@ const VIEWS = {
       body: `<div class="card">
         <label for="op">Il tuo nome</label>
         <input id="op" value="${esc(S.operatore)}" placeholder="es. Marco" autocomplete="off">
-        <label for="pin">PIN</label>
-        <input id="pin" type="password" value="${esc(S.pin)}" autocomplete="off" autocapitalize="off">
         <button class="btn primary block" style="margin-top:18px" data-act="login">Entra</button>
       </div>`,
     };
@@ -320,30 +315,19 @@ const VIEWS = {
     const o = sommaOrdini(S.d.ordini);
     const voce = (m, ico, titolo, info) => `<button class="menu-card" data-act="entra" data-m="${m}">
         <span class="ico">${ico}</span>
-        <span><span class="t">${titolo}</span><br><span class="muted">${info}</span>
-          ${pinDi(m) ? `<br><span class="muted">PIN: <b style="color:var(--text)">${esc(pinDi(m))}</b></span>` : ''}</span>
-        <span class="freccia muted">${pinDi(m) ? '&rsaquo;' : '&#128274;'}</span>
+        <span><span class="t">${titolo}</span><br><span class="muted">${info}</span></span>
+        <span class="freccia muted">&rsaquo;</span>
       </button>`;
-    const formPin = S.chiediPin ? `<div class="card">
-        <label for="pin2">PIN ${NOMI_MODO[S.chiediPin]}</label>
-        <input id="pin2" type="password" value="${esc(S.pin2)}" autocomplete="off" autocapitalize="off">
-        <div class="row" style="margin-top:12px">
-          <button class="btn" style="flex:1" data-act="menu">Annulla</button>
-          <button class="btn primary" style="flex:1" data-act="confermaPin" data-m="${S.chiediPin}">Entra</button>
-        </div>
-      </div>` : '';
     return {
       header: hdr('Menu'),
       body: `<p class="muted" style="margin-top:0">Ciao ${esc(S.operatore)} · ${serata ? 'Serata ' + fmtData(serata.data) : 'Nessuna serata aperta'}</p>
         ${voce('ingressi', '&#127903;&#65039;', NOMI_MODO.ingressi, serata ? g.persone + ' persone · ' + eur(g.importo) : 'Persone in entrata ai tavoli')}
         ${voce('tavoli', '&#127870;', NOMI_MODO.tavoli, serata ? o.n + ' ordini · ' + eur(o.pagato) + ' pagato' : 'Ordini di bottiglie')}
-        ${formPin}
         ${serata
           ? '<button class="btn block" data-act="vai" data-v="riepilogo">Riepilogo serata</button>'
           : '<button class="btn primary block" data-act="vai" data-v="noSerata">Apri serata</button>'}
         <p class="muted" style="text-align:center;margin-top:24px">Operatore: ${esc(S.operatore)} ·
           <a href="#" data-act="esci" style="color:var(--muted)">esci</a></p>`,
-      after() { if (S.chiediPin) $('pin2').focus(); },
     };
   },
 
@@ -653,18 +637,6 @@ function render() {
   if (v.after) v.after();
 }
 
-/** PIN di una modalità: quello già usato su questo telefono, altrimenti quello mandato dal server. */
-function pinDi(m) {
-  return S.pins[m] || (S.d && S.d.pin && S.d.pin[m]) || '';
-}
-
-/** Salva il PIN in uso sotto la modalità che ha aperto. */
-function ricordaPin() {
-  S.pins[S.d.modo] = S.pin;
-  LS.set('pin_' + S.d.modo, S.pin);
-  LS.set('pin', S.pin);
-}
-
 // Piantina del locale: centro (x, y) di ogni tavolo nel viewBox dell'SVG.
 const POSTI = {
   1: [612, 244], 2: [612, 331], 3: [535, 456], 4: [448, 456], 5: [361, 456], 6: [262, 341],
@@ -740,28 +712,19 @@ function aggiornaPag() {
 const ACT = {
   async login() {
     S.operatore = $('op').value.trim();
-    S.pin = $('pin').value.trim();
     if (!S.operatore) return toast('Inserisci il tuo nome');
     try { await call('stato'); } catch (e) { return; }
     LS.set('operatore', S.operatore);
-    ricordaPin();
     S.view = 'menu';
     render();
   },
   esci() {
-    S.pin = '';
-    S.pins = { tavoli: '', ingressi: '' };
-    S.chiediPin = null;
-    S.pin2 = '';
     S.nuovi = null;
     S.ordine = null;
-    ['pin', 'pin_tavoli', 'pin_ingressi'].forEach(k => LS.set(k, ''));
     S.view = 'login';
     render();
   },
   menu() {
-    S.chiediPin = null;
-    S.pin2 = '';
     S.view = 'menu';
     render();
     window.scrollTo(0, 0);
@@ -769,38 +732,10 @@ const ACT = {
   async entra(ds) {
     const m = ds.m;
     if (S.d.modo === m) { S.view = 'lista'; render(); window.scrollTo(0, 0); return; }
-    if (!pinDi(m)) { S.chiediPin = m; S.pin2 = ''; render(); return; }
-    const prima = S.pin;
-    S.pin = pinDi(m);
-    try { await call('stato', null, true); } catch (e) {
-      S.pin = prima;
-      if (errMsg(e) !== 'PIN errato') { toast(errMsg(e)); return; }  // rete: il PIN salvato resta
-      // PIN cambiato nel foglio: lo richiedo
-      S.pins[m] = '';
-      LS.set('pin_' + m, '');
-      S.chiediPin = m;
-      S.pin2 = '';
-      render();
-      return;
-    }
-    ricordaPin();
-    S.chiediPin = null;
-    S.view = 'lista';
-    render();
-    window.scrollTo(0, 0);
-  },
-  async confermaPin(ds) {
-    const prima = S.pin;
-    S.pin = $('pin2').value.trim();
-    try { await call('stato'); } catch (e) { S.pin = prima; return; }
-    ricordaPin();
-    S.chiediPin = null;
-    S.pin2 = '';
-    if (S.d.modo !== ds.m) {
-      toast('Questo PIN apre la modalità ' + nomeModo());
-      render();
-      return;
-    }
+    const prima = S.modo;
+    S.modo = m;
+    try { await call('stato'); } catch (e) { S.modo = prima; return; }
+    LS.set('modo', m);
     S.view = 'lista';
     render();
     window.scrollTo(0, 0);
@@ -1009,13 +944,11 @@ document.addEventListener('input', e => {
   }
   if (ds.nt !== undefined && S.nuovi) S.nuovi[Number(ds.nt)][ds.f] = e.target.value;
   if (e.target.id === 'dataSerata') S.dataSerata = e.target.value;
-  if (e.target.id === 'pin2') S.pin2 = e.target.value;
 });
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
-  if (e.target.id === 'pin' || e.target.id === 'op') ACT.login();
-  if (e.target.id === 'pin2') ACT.confermaPin({ m: S.chiediPin });
+  if (e.target.id === 'op') ACT.login();
 });
 
 // ------------------------------------------------------------ sincronizzazione
@@ -1042,10 +975,10 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) aggi
 
 // ------------------------------------------------------------ avvio
 (async function start() {
-  if (S.pin && S.operatore) {
+  ['pin', 'pin_tavoli', 'pin_ingressi'].forEach(k => LS.set(k, ''));  // PIN delle versioni precedenti
+  if (S.operatore) {
     try {
       await call('stato', null, true);
-      ricordaPin();
       S.view = 'menu';
     } catch (e) {
       S.view = 'login';
