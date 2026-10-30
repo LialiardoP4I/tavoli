@@ -112,6 +112,30 @@
   .menu-card .ico { font-size: 34px; }
   .menu-card .t { font-size: 22px; font-weight: 800; }
   .menu-card .freccia { margin-left: auto; font-size: 22px; }
+  /* Tablet: più spazio e caratteri più grandi */
+  @media (min-width: 700px) {
+    body { font-size: 17px; }
+    main { max-width: 860px; }
+    .footer .inner { max-width: 860px; }
+    .kpi { font-size: 26px; }
+    .tav { min-height: 120px; }
+    .tav .n { font-size: 26px; }
+  }
+  /* Tablet in orizzontale: piantina a sinistra, tavolo scelto a destra */
+  @media (min-width: 900px) {
+    main, .footer .inner { max-width: 1400px; }
+    header h1 { font-size: 22px; }
+    .split { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+    .pannello { position: sticky; top: 70px; max-height: calc(100vh - 150px); overflow-y: auto;
+      background: var(--bg); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
+    .pannello h2 { margin: 0 0 12px; font-size: 24px; }
+    .pannello-azioni { margin-top: 12px; } .pannello-azioni .btn { width: 100%; }
+    .pannello .btn.huge { padding: 30px 16px; font-size: 26px; }
+    .pannello .step.big button { width: 76px; height: 76px; font-size: 34px; }
+    .pannello .step.big .q { min-width: 80px; font-size: 44px; }
+  }
+  .mappa .tv.sel rect { stroke: var(--warn); stroke-width: 6; }
+  .tav.sel { outline: 3px solid var(--warn); }
   .avviso { background: rgba(255, 184, 77, .12); border: 1px solid var(--warn); color: var(--warn); border-radius: 12px;
     padding: 10px 12px; margin-top: 10px; font-size: 14px; }
 </style>
@@ -316,7 +340,7 @@ const adesso = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.get
 let ultimoIngresso = 0;
 const tondo = n => Math.round(num(n) * 100) / 100;
 const diffHtml = n => { n = tondo(n); return n === 0 ? eur(0) : '<span class="' + (n > 0 ? 'pos' : 'neg') + '">' + (n > 0 ? '+' : '−') + eur(Math.abs(n)) + '</span>'; };
-const VERSIONE = '30/10 17:10';  // mostrata in fondo: se non è questa, ricaricare la pagina
+const VERSIONE = '30/10 17:30';  // mostrata in fondo: se non è questa, ricaricare la pagina
 const NOMI_MODO = { tavoli: 'Cambusa', ingressi: 'Ingresso tavoli' };
 const isTavoli = () => S.d && S.d.modo === 'tavoli';
 const nomeModo = () => NOMI_MODO[isTavoli() ? 'tavoli' : 'ingressi'];
@@ -727,7 +751,7 @@ function render() {
     if (S.view === 'tavolo' && !isTavoli()) S.view = 'ingresso';
     if (S.view === 'ingresso' && isTavoli()) S.view = 'tavolo';
   }
-  const v = VIEWS[S.view]();
+  const v = divisa() ? vistaDivisa() : VIEWS[S.view]();
   const vecchiaMappa = document.querySelector('.mappa-wrap');
   const scorri = vecchiaMappa ? vecchiaMappa.scrollLeft : 0;
   $('hdr').innerHTML = v.header;
@@ -735,8 +759,37 @@ function render() {
   $('foot').innerHTML = v.footer ? '<div class="footer"><div class="inner">' + v.footer + '</div></div>' : '';
   const mappa = document.querySelector('.mappa-wrap');
   if (mappa && scorri) mappa.scrollLeft = scorri;
+  if (S.tavoloId && window.CSS && CSS.escape) {
+    document.querySelectorAll('[data-act="apriTavolo"][data-id="' + CSS.escape(S.tavoloId) + '"]').forEach(el => el.classList.add('sel'));
+  }
   if (v.after) v.after();
 }
+
+// Schermo largo (tablet in orizzontale): elenco/piantina e tavolo scelto nella stessa pagina.
+const largo = () => window.matchMedia('(min-width: 900px)').matches;
+const divisa = () => largo() && ['lista', 'tavolo', 'ingresso'].includes(S.view);
+
+function vistaDivisa() {
+  const l = VIEWS.lista();
+  const t = S.tavoloId && tavolo();
+  let pannello = '<p class="empty">Tocca un tavolo sulla piantina</p>';
+  if (t) {
+    const p = VIEWS[isTavoli() ? 'tavolo' : 'ingresso']();
+    pannello = `<h2>Tavolo ${esc(t.etichetta)}</h2>${p.footer ? '<div class="pannello-azioni" style="margin:0 0 12px">' + p.footer + '</div>' : ''}${p.body}`;
+  }
+  return {
+    header: l.header,
+    body: `<div class="split"><div>${l.body}</div><div class="pannello">${pannello}</div></div>`,
+    footer: l.footer,
+  };
+}
+
+let eraDivisa = null;
+window.addEventListener('resize', () => {
+  const ora = divisa();
+  if (eraDivisa !== null && ora !== eraDivisa && S.d) render();
+  eraDivisa = ora;
+});
 
 // Piantina del locale: centro (x, y) di ogni tavolo nel viewBox dell'SVG.
 const POSTI = {
@@ -897,7 +950,7 @@ const ACT = {
     S.persone = 1;
     S.view = isTavoli() ? 'tavolo' : 'ingresso';
     render();
-    window.scrollTo(0, 0);
+    if (!largo()) window.scrollTo(0, 0);
   },
   async rinominaTavolo() {
     const t = tavolo();
