@@ -83,7 +83,15 @@
   .mappa .tv { cursor: pointer; }
   .mappa .tv rect { fill: var(--card2); stroke: var(--muted); stroke-width: 2; }
   .mappa .tv.on rect { fill: var(--accent); stroke: var(--accent); }
-  .mappa .tv.vuoto rect { fill: none; stroke-dasharray: 5 4; }
+  .mappa .tv.vuoto rect { fill: transparent; stroke-dasharray: 5 4; }
+  .mappa .tv rect { pointer-events: all; }
+  .mappa .tv.credito rect { stroke: var(--ok); stroke-width: 3; }
+  .mappa .tv .dr circle { fill: var(--ok); stroke: var(--bg); stroke-width: 2; }
+  .mappa .tv .dr text { font-size: 15px; font-weight: 800; fill: #04210f; text-anchor: middle; }
+  .mappa .tv .dr.zero circle { fill: var(--muted); }
+  .mappa .tv .dr.neg circle { fill: var(--bad); }
+  .mappa .tv .dr.neg text { fill: #fff; }
+  .mappa-nota { margin: -6px 0 14px; }
   .mappa .tv text { text-anchor: middle; fill: var(--text); }
   .mappa .tv .num { font-size: 26px; font-weight: 800; }
   .mappa .tv .nm { font-size: 19px; font-weight: 600; }
@@ -128,40 +136,67 @@ const S = {
   nuovi: null,          // righe della pagina inserimento tavoli: [{numero, nome}]
   ordine: null,         // { id, step, qta: {bottigliaId: n}, contanti, carta, drink, note }
   persone: 1,           // modalità ingressi
+  ingressoId: null,     // id dell'ingresso in corso: resta lo stesso se si ripete dopo un errore
+  dataSerata: '',       // data scelta nella pagina "Apri serata"
+  pin2: '',             // PIN digitato nel menu
   zoom: LS.get('zoomMappa') === '1',  // piantina ingrandita (scorrevole)
   busy: false,
   sync: 'ok',
 };
 
 // ------------------------------------------------------------ server
-// Fuori da Google (GitHub Pages) l'app parla con lo script via POST; dentro Apps Script usa google.script.run.
+// L'app (GitHub Pages) parla con lo script Google via POST.
 const API_URL = 'https://script.google.com/macros/s/AKfycbwuCVVV7z-pCK_GDnnrWnW6b86ixKmmTbptEmsaY8MKPHbTqaL2pZjnon6nYmMcqfDx1g/exec';
+const TIMEOUT_MS = 25000;
 
 function api(action, payload) {
-  if (window.google && google.script && google.script.run) {
-    return new Promise((res, rej) => {
-      google.script.run.withSuccessHandler(res).withFailureHandler(rej).api(action, payload || {}, S.pin);
-    });
-  }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   return fetch(API_URL, {
     method: 'POST',
     body: JSON.stringify({ action, payload: payload || {}, pin: S.pin }),
+    signal: ctrl.signal,
   })
-    .then(r => { if (!r.ok) throw new Error('Errore di connessione (' + r.status + ')'); return r.json(); })
-    .then(r => { if (!r.ok) throw new Error(r.error); return r.data; });
+    .then(r => {
+      if (!r.ok) throw new Error('Errore del server (' + r.status + '): riprova');
+      return r.json().catch(() => { throw new Error('Risposta non valida dal server: riprova'); });
+    }, e => {
+      throw new Error(e && e.name === 'AbortError' ? 'Il server non risponde: riprova' : 'Connessione assente: riprova');
+    })
+    .then(r => { if (!r.ok) throw new Error(r.error); return r.data; })
+    .finally(() => clearTimeout(timer));
 }
 
+// Le risposte possono arrivare in disordine: applico solo quelle più recenti dell'ultima applicata.
+let seqInviata = 0, seqApplicata = 0, scrittureInCorso = 0;
+
 async function call(action, payload, silent) {
+  const seq = ++seqInviata;
+  const scrive = action !== 'stato';
+  if (scrive) scrittureInCorso++;
   setSync('busy');
   try {
-    S.d = await api(action, payload);
+    const d = await api(action, payload);
+    if (seq > seqApplicata) { seqApplicata = seq; S.d = d; }
     setSync('ok');
-    return S.d;
+    return d;
   } catch (e) {
     setSync('off');
     if (!silent) toast(errMsg(e));
+    // Serata chiusa da un altro telefono: lo stato locale si allinea subito (il render porta a "Nessuna serata")
+    if (/serata non è più aperta/.test(errMsg(e)) && S.d) S.d = Object.assign({}, S.d, { serata: null });
     throw e;
+  } finally {
+    if (scrive) scrittureInCorso--;
   }
+}
+
+/** La serata può essere chiusa da un altro telefono mentre si lavora. */
+function serataOk() {
+  if (S.d && S.d.serata) return true;
+  toast('La serata è stata chiusa da un altro telefono: operazione non salvata');
+  render();
+  return false;
 }
 
 function errMsg(e) {
@@ -185,9 +220,13 @@ const fmtData = iso => { const p = String(iso || '').slice(0, 10).split('-'); re
 const ora = iso => String(iso || '').slice(11, 16);
 const oggi = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 const nuovoId = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-const diffHtml = n => n === 0 ? eur(0) : '<span class="' + (n > 0 ? 'pos' : 'neg') + '">' + (n > 0 ? '+' : '−') + eur(Math.abs(n)) + '</span>';
+const tondo = n => Math.round(num(n) * 100) / 100;
+const diffHtml = n => { n = tondo(n); return n === 0 ? eur(0) : '<span class="' + (n > 0 ? 'pos' : 'neg') + '">' + (n > 0 ? '+' : '−') + eur(Math.abs(n)) + '</span>'; };
+const NOMI_MODO = { tavoli: 'Cambusa', ingressi: 'Ingresso tavoli' };
 const isTavoli = () => S.d && S.d.modo === 'tavoli';
-const nomeModo = () => isTavoli() ? 'Tavoli' : 'Ingressi';
+const nomeModo = () => NOMI_MODO[isTavoli() ? 'tavoli' : 'ingressi'];
+/** Numero del tavolo come chiave ("05" e "5" sono lo stesso tavolo). */
+const chiaveNumero = n => String(n === undefined || n === null ? '' : n).trim().toLowerCase().replace(/^0+(?=\d)/, '');
 
 let toastTimer;
 function toast(msg, ok) {
@@ -270,8 +309,7 @@ const VIEWS = {
         <input id="op" value="${esc(S.operatore)}" placeholder="es. Marco" autocomplete="off">
         <label for="pin">PIN</label>
         <input id="pin" type="password" value="${esc(S.pin)}" autocomplete="off" autocapitalize="off">
-        <p class="muted">Il PIN decide la modalità: Tavoli o Ingressi.</p>
-        <button class="btn primary block" style="margin-top:8px" data-act="login">Entra</button>
+        <button class="btn primary block" style="margin-top:18px" data-act="login">Entra</button>
       </div>`,
     };
   },
@@ -286,8 +324,8 @@ const VIEWS = {
         <span class="freccia muted">${S.pins[m] ? '&rsaquo;' : '&#128274;'}</span>
       </button>`;
     const formPin = S.chiediPin ? `<div class="card">
-        <label for="pin2">PIN ${S.chiediPin === 'tavoli' ? 'Tavoli' : 'Ingressi'}</label>
-        <input id="pin2" type="password" autocomplete="off" autocapitalize="off">
+        <label for="pin2">PIN ${NOMI_MODO[S.chiediPin]}</label>
+        <input id="pin2" type="password" value="${esc(S.pin2)}" autocomplete="off" autocapitalize="off">
         <div class="row" style="margin-top:12px">
           <button class="btn" style="flex:1" data-act="menu">Annulla</button>
           <button class="btn primary" style="flex:1" data-act="confermaPin" data-m="${S.chiediPin}">Entra</button>
@@ -296,8 +334,8 @@ const VIEWS = {
     return {
       header: hdr('Menu'),
       body: `<p class="muted" style="margin-top:0">Ciao ${esc(S.operatore)} · ${serata ? 'Serata ' + fmtData(serata.data) : 'Nessuna serata aperta'}</p>
-        ${voce('ingressi', '&#127903;&#65039;', 'Ingressi', serata ? g.persone + ' persone · ' + eur(g.importo) : 'Persone in entrata')}
-        ${voce('tavoli', '&#127870;', 'Tavoli', serata ? o.n + ' ordini · ' + eur(o.pagato) + ' pagato' : 'Ordini di bottiglie')}
+        ${voce('ingressi', '&#127903;&#65039;', NOMI_MODO.ingressi, serata ? g.persone + ' persone · ' + eur(g.importo) : 'Persone in entrata ai tavoli')}
+        ${voce('tavoli', '&#127870;', NOMI_MODO.tavoli, serata ? o.n + ' ordini · ' + eur(o.pagato) + ' pagato' : 'Ordini di bottiglie')}
         ${formPin}
         ${serata
           ? '<button class="btn block" data-act="vai" data-v="riepilogo">Riepilogo serata</button>'
@@ -313,7 +351,7 @@ const VIEWS = {
       header: hdr('Nessuna serata aperta', 'menu'),
       body: `<div class="card">
         <label for="dataSerata">Data della serata</label>
-        <input id="dataSerata" type="date" value="${oggi()}">
+        <input id="dataSerata" type="date" value="${esc(S.dataSerata || oggi())}">
         <button class="btn primary block" style="margin-top:18px" data-act="apriSerata">Apri serata</button>
       </div>${esci()}`,
     };
@@ -356,9 +394,9 @@ const VIEWS = {
         <span class="muted">${eur(s.importo)}</span>
       </button>`;
     };
-    // Tavoli con numero presente sulla piantina vanno sulla mappa, gli altri nella griglia sotto.
-    const sullaMappa = t => !!POSTI[String(t.numero === undefined ? '' : t.numero).trim()];
-    const cards = S.d.tavoli.filter(t => !sullaMappa(t)).map(card).join('');
+    // Tavoli con numero presente sulla piantina vanno sulla mappa, tutti gli altri nella griglia sotto.
+    const posti = postiMappa();
+    const cards = S.d.tavoli.filter(t => !posti.ids[t.id]).map(card).join('');
 
     let kpi;
     if (isTavoli()) {
@@ -375,7 +413,7 @@ const VIEWS = {
       header: hdr('Serata ' + fmtData(S.d.serata.data), 'menu'),
       body: `<div class="kpis">${kpi}</div>
         <button class="btn block" style="margin-bottom:14px" data-act="nuoviTavoli">+ Aggiungi tavoli</button>
-        ${piantina()}
+        ${piantina(posti)}
         ${cards ? `<div class="cat">Altri tavoli</div><div class="grid">${cards}</div>` : ''}`,
       footer: nav('lista'),
     };
@@ -553,7 +591,7 @@ const VIEWS = {
 
     return {
       header: hdr('Riepilogo ' + fmtData(S.d.serata.data), 'menu'),
-      body: `<div class="cat" style="margin-top:0">Ingressi</div>
+      body: `<div class="cat" style="margin-top:0">${NOMI_MODO.ingressi}</div>
         <div class="kpis">
           <div class="card"><div class="muted">Persone</div><div class="kpi">${g.persone}</div></div>
           <div class="card"><div class="muted">Incasso ingressi</div><div class="kpi">${eur(g.importo)}</div></div>
@@ -563,7 +601,7 @@ const VIEWS = {
           <div class="row"><span>POS</span><b>${eur(g.pos)}</b></div>
           <div class="row"><span>Drink date ai tavoli</span><b>${g.drink}</b></div>
         </div>
-        <div class="cat">Tavoli</div>
+        <div class="cat">${NOMI_MODO.tavoli}</div>
         <div class="kpis">
           <div class="card"><div class="muted">Pagato</div><div class="kpi">${eur(o.pagato)}</div></div>
           <div class="card"><div class="muted">Listino</div><div class="kpi">${eur(o.listino)}</div></div>
@@ -604,9 +642,13 @@ function render() {
     if (S.view === 'ingresso' && isTavoli()) S.view = 'tavolo';
   }
   const v = VIEWS[S.view]();
+  const vecchiaMappa = document.querySelector('.mappa-wrap');
+  const scorri = vecchiaMappa ? vecchiaMappa.scrollLeft : 0;
   $('hdr').innerHTML = v.header;
   $('app').innerHTML = v.body;
   $('foot').innerHTML = v.footer ? '<div class="footer"><div class="inner">' + v.footer + '</div></div>' : '';
+  const mappa = document.querySelector('.mappa-wrap');
+  if (mappa && scorri) mappa.scrollLeft = scorri;
   if (v.after) v.after();
 }
 
@@ -622,22 +664,42 @@ const POSTI = {
   1: [612, 244], 2: [612, 331], 3: [535, 456], 4: [448, 456], 5: [361, 456], 6: [262, 341],
   7: [266, 178], 8: [266, 102], 9: [161, 276], 10: [161, 453], 11: [305, 600],
 };
-const corto = (s, n) => { s = String(s || '').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+const corto = (s, n) => { const c = Array.from(String(s || '').trim()); return c.length > n ? c.slice(0, n - 1).join('') + '…' : c.join(''); };
 
-function piantina() {
-  const perNum = {};
-  S.d.tavoli.forEach(t => { perNum[String(t.numero === undefined ? '' : t.numero).trim()] = t; });
+/** Assegna i tavoli ai posti della mappa: un solo tavolo per posto, gli eventuali doppioni vanno in "Altri tavoli". */
+function postiMappa() {
+  const perNum = {}, ids = {};
+  S.d.tavoli.forEach(t => {
+    const k = chiaveNumero(t.numero);
+    if (POSTI[k] && !perNum[k]) { perNum[k] = t; ids[t.id] = true; }
+  });
+  return { perNum, ids };
+}
+
+function piantina(posti) {
+  const perNum = posti.perNum;
   const W = 82, H = 72;
   const box = Object.keys(POSTI).map(n => {
     const [x, y] = POSTI[n];
     const r = `<rect x="${x - W / 2}" y="${y - H / 2}" width="${W}" height="${H}" rx="8"/>`;
     const t = perNum[n];
     if (!t) return `<g class="tv vuoto" data-act="nuoviTavoli" data-n="${n}">${r}<text class="num" x="${x}" y="${y + 8}">${n}</text></g>`;
-    let sub, on;
-    if (isTavoli()) { const o = sommaOrdini(ordiniTavolo(t.id)); sub = o.n ? eur(o.pagato) : ''; on = o.n > 0; }
-    else { const i = sommaIngressi(ingressiTavolo(t.id)); sub = i.persone ? i.persone + ' pers.' : ''; on = i.persone > 0; }
+    let sub, on, drink = '', credito = false;
+    if (isTavoli()) {
+      const o = sommaOrdini(ordiniTavolo(t.id));
+      const d = drinkTavolo(t.id);
+      sub = o.n ? eur(o.pagato) : '';
+      on = o.n > 0;
+      // In alto a destra: drink residue dagli ingressi (rosse se usate più di quelle disponibili)
+      if (d.disp || d.usate) {
+        const cx = x + W / 2 - 13, cy = y - H / 2 + 13;
+        drink = `<g class="dr${d.residue < 0 ? ' neg' : d.residue === 0 ? ' zero' : ''}"><circle cx="${cx}" cy="${cy}" r="12"/>` +
+          `<text x="${cx}" y="${cy + 5}">${d.residue}</text></g>`;
+        credito = d.residue > 0;
+      }
+    } else { const i = sommaIngressi(ingressiTavolo(t.id)); sub = i.persone ? i.persone + ' pers.' : ''; on = i.persone > 0; }
     const nome = corto(t.nome, S.zoom ? 9 : 7);
-    return `<g class="tv${on ? ' on' : ''}" data-act="apriTavolo" data-id="${esc(t.id)}">${r}
+    return `<g class="tv${on ? ' on' : ''}${credito ? ' credito' : ''}" data-act="apriTavolo" data-id="${esc(t.id)}">${r}${drink}
       <text class="num" x="${x}" y="${y - (nome || sub ? 10 : -9)}">${n}</text>
       ${nome ? `<text class="nm" x="${x}" y="${y + 11}">${esc(nome)}</text>` : ''}
       ${sub ? `<text class="sub" x="${x}" y="${y + (nome ? 29 : 14)}">${esc(sub)}</text>` : ''}</g>`;
@@ -649,7 +711,8 @@ function piantina() {
     <rect class="zona" x="353" y="197" width="192" height="59"/><text class="lbl" x="449" y="227">PALCO</text>
     <rect class="zona" x="457" y="585" width="161" height="45"/><text class="lbl" x="537" y="608">Bar Grande</text>
     <text class="lbl" x="690" y="470" transform="rotate(90 690 470)">Ingresso →</text>
-    ${box}</svg></div>`;
+    ${box}</svg></div>
+    ${isTavoli() ? '<p class="muted mappa-nota">Pallino in alto a destra = drink ancora disponibili dagli ingressi (verde: ci sono, grigio: finite, rosso: usate più del dovuto).</p>' : ''}`;
 }
 
 const righeVuote = () => Array.from({ length: 5 }, () => ({ numero: '', nome: '' }));
@@ -682,12 +745,17 @@ const ACT = {
   esci() {
     S.pin = '';
     S.pins = { tavoli: '', ingressi: '' };
+    S.chiediPin = null;
+    S.pin2 = '';
+    S.nuovi = null;
+    S.ordine = null;
     ['pin', 'pin_tavoli', 'pin_ingressi'].forEach(k => LS.set(k, ''));
     S.view = 'login';
     render();
   },
   menu() {
     S.chiediPin = null;
+    S.pin2 = '';
     S.view = 'menu';
     render();
     window.scrollTo(0, 0);
@@ -695,15 +763,17 @@ const ACT = {
   async entra(ds) {
     const m = ds.m;
     if (S.d.modo === m) { S.view = 'lista'; render(); window.scrollTo(0, 0); return; }
-    if (!S.pins[m]) { S.chiediPin = m; render(); return; }
+    if (!S.pins[m]) { S.chiediPin = m; S.pin2 = ''; render(); return; }
     const prima = S.pin;
     S.pin = S.pins[m];
     try { await call('stato', null, true); } catch (e) {
-      // PIN cambiato nel foglio: lo richiedo
       S.pin = prima;
+      if (errMsg(e) !== 'PIN errato') { toast(errMsg(e)); return; }  // rete: il PIN salvato resta
+      // PIN cambiato nel foglio: lo richiedo
       S.pins[m] = '';
       LS.set('pin_' + m, '');
       S.chiediPin = m;
+      S.pin2 = '';
       render();
       return;
     }
@@ -719,6 +789,7 @@ const ACT = {
     try { await call('stato'); } catch (e) { S.pin = prima; return; }
     ricordaPin();
     S.chiediPin = null;
+    S.pin2 = '';
     if (S.d.modo !== ds.m) {
       toast('Questo PIN apre la modalità ' + nomeModo());
       render();
@@ -730,10 +801,12 @@ const ACT = {
   },
   async apriSerata() {
     try { await call('apriSerata', { data: $('dataSerata').value }); } catch (e) { return; }
+    S.dataSerata = '';
     S.view = 'lista';
     render();
   },
   async chiudiSerata() {
+    if (!serataOk()) return;
     if (!confirm('Chiudere la serata?\n\nIl riepilogo viene salvato sul foglio e non si potranno più registrare ordini o ingressi.')) return;
     try { await call('chiudiSerata', { serataId: S.d.serata.id }); } catch (e) { return; }
     toast('Serata chiusa e salvata', true);
@@ -755,6 +828,7 @@ const ACT = {
     const tavoli = S.nuovi.filter(t => t.numero.trim() || t.nome.trim());
     if (!tavoli.length) return toast('Inserisci almeno un tavolo');
     if (tavoli.some(t => !t.numero.trim())) return toast('Ogni tavolo deve avere un numero');
+    if (!serataOk()) return;
     S.busy = true;
     render();
     try {
@@ -779,6 +853,7 @@ const ACT = {
   apriTavolo(ds) {
     S.tavoloId = ds.id;
     S.persone = 1;
+    S.ingressoId = null;
     S.view = isTavoli() ? 'tavolo' : 'ingresso';
     render();
     window.scrollTo(0, 0);
@@ -793,6 +868,7 @@ const ACT = {
     const msg = 'Eliminare il tavolo ' + t.etichetta + '?' +
       (cosa.length ? '\n\nHa ' + cosa.join(' e ') + ': verranno annullati e non conteranno nei totali.' : '');
     if (!confirm(msg)) return;
+    if (!serataOk()) return;
     try { await call('eliminaTavolo', { serataId: S.d.serata.id, tavoloId: t.id }); } catch (e) { return; }
     S.view = 'lista';
     toast('Tavolo eliminato', true);
@@ -803,13 +879,16 @@ const ACT = {
   // --- ingressi
   persone(ds) { S.persone = Math.max(1, Math.min(50, S.persone + Number(ds.d))); render(); },
   async ingresso(ds) {
-    if (S.busy) return;
+    if (S.busy || !serataOk()) return;
+    // Stesso id finché l'ingresso non risulta salvato: se la risposta si perde e si ritocca, il server non lo duplica.
+    S.ingressoId = S.ingressoId || nuovoId('I');
     S.busy = true;
     render();
     const persone = S.persone;
+    let d;
     try {
-      await call('creaIngresso', {
-        id: nuovoId('I'), serataId: S.d.serata.id, tavoloId: S.tavoloId,
+      d = await call('creaIngresso', {
+        id: S.ingressoId, serataId: S.d.serata.id, tavoloId: S.tavoloId,
         persone, metodo: ds.m, operatore: S.operatore,
       });
     } catch (e) {
@@ -818,8 +897,10 @@ const ACT = {
       return;
     }
     S.busy = false;
+    S.ingressoId = null;
     S.persone = 1;
-    toast('+' + persone + ' ' + (persone === 1 ? 'persona' : 'persone') + ' · ' + ds.m, true);
+    if (d && d.giaRegistrato) toast('Ingresso già registrato al tentativo precedente: controlla l\'elenco');
+    else toast('+' + persone + ' ' + (persone === 1 ? 'persona' : 'persone') + ' · ' + ds.m, true);
     render();
   },
   async annullaIngresso(ds) {
@@ -861,8 +942,8 @@ const ACT = {
     const o = S.ordine;
     const listino = totaleCarrello().listino;
     o.contanti = ''; o.carta = ''; o.drink = 0;
-    if (ds.m === 'contanti') o.contanti = String(listino);
-    if (ds.m === 'carta') o.carta = String(listino);
+    if (ds.m === 'contanti') o.contanti = String(tondo(listino));
+    if (ds.m === 'carta') o.carta = String(tondo(listino));
     if (ds.m === 'drink') o.drink = Math.ceil(listino / S.d.valoreDrink);
     render();
   },
@@ -875,10 +956,12 @@ const ACT = {
     if (pagatoOrdine() === 0 && !confirm('Totale pagato € 0. Confermare comunque?')) return;
     const residue = drinkTavolo(S.tavoloId).residue;
     if (o.drink > residue && !confirm('Il tavolo ha solo ' + residue + ' drink residue dagli ingressi, ne stai usando ' + o.drink + '. Confermare comunque?')) return;
+    if (!serataOk()) return;
     S.busy = true;
     render();
+    let d;
     try {
-      await call('creaOrdine', {
+      d = await call('creaOrdine', {
         id: o.id,
         serataId: S.d.serata.id,
         tavoloId: S.tavoloId,
@@ -897,7 +980,8 @@ const ACT = {
     S.busy = false;
     S.ordine = null;
     S.view = 'tavolo';
-    toast('Ordine salvato', true);
+    if (d && d.giaRegistrato) toast('Ordine già registrato al tentativo precedente: controlla che sia giusto');
+    else toast('Ordine salvato', true);
     render();
     window.scrollTo(0, 0);
   },
@@ -918,6 +1002,8 @@ document.addEventListener('input', e => {
     aggiornaPag();
   }
   if (ds.nt !== undefined && S.nuovi) S.nuovi[Number(ds.nt)][ds.f] = e.target.value;
+  if (e.target.id === 'dataSerata') S.dataSerata = e.target.value;
+  if (e.target.id === 'pin2') S.pin2 = e.target.value;
 });
 
 document.addEventListener('keydown', e => {
@@ -927,12 +1013,21 @@ document.addEventListener('keydown', e => {
 });
 
 // ------------------------------------------------------------ sincronizzazione
+let pollInCorso = false, ultimoDisegnato = '';
+
 async function aggiorna() {
-  if (S.view === 'login' || S.busy) return;
-  try { await call('stato', null, true); } catch (e) { return; }
+  // Niente aggiornamenti sovrapposti né durante un salvataggio (la risposta del salvataggio è già fresca).
+  if (S.view === 'login' || S.busy || scrittureInCorso || pollInCorso) return;
+  pollInCorso = true;
+  let d;
+  try { d = await call('stato', null, true); } catch (e) { return; } finally { pollInCorso = false; }
+  if (d !== S.d) return;  // risposta superata da una più recente
   const typing = ['INPUT', 'TEXTAREA'].includes((document.activeElement || {}).tagName);
   // Durante un ordine, l'inserimento tavoli o mentre si scrive non ridisegno: i dati arrivano comunque.
   if (S.view === 'ordine' || S.view === 'nuoviTavoli' || typing) return;
+  const firma = JSON.stringify(S.d);
+  if (firma === ultimoDisegnato) return;  // niente di nuovo: lo schermo resta com'è
+  ultimoDisegnato = firma;
   render();
 }
 
