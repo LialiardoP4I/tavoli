@@ -14,7 +14,8 @@
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; background: var(--bg); color: var(--text); }
   body { font: 16px/1.4 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; }
-  button { font: inherit; color: inherit; cursor: pointer; }
+  button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulation; }
+  html { touch-action: manipulation; }  /* niente attesa del doppio tocco sui telefoni */
   header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line);
     padding: 12px 16px; display: flex; align-items: center; gap: 10px; }
   header h1 { flex: 1; margin: 0; font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -315,6 +316,7 @@ const adesso = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.get
 let ultimoIngresso = 0;
 const tondo = n => Math.round(num(n) * 100) / 100;
 const diffHtml = n => { n = tondo(n); return n === 0 ? eur(0) : '<span class="' + (n > 0 ? 'pos' : 'neg') + '">' + (n > 0 ? '+' : '−') + eur(Math.abs(n)) + '</span>'; };
+const VERSIONE = '30/10 17:10';  // mostrata in fondo: se non è questa, ricaricare la pagina
 const NOMI_MODO = { tavoli: 'Cambusa', ingressi: 'Ingresso tavoli' };
 const isTavoli = () => S.d && S.d.modo === 'tavoli';
 const nomeModo = () => NOMI_MODO[isTavoli() ? 'tavoli' : 'ingressi'];
@@ -392,7 +394,7 @@ const nav = cur =>
   '<button class="btn tab' + (cur === 'riepilogo' ? ' on' : '') + '" data-act="vai" data-v="riepilogo">Riepilogo</button>';
 
 const esci = () => `<p class="muted" style="text-align:center">Operatore: ${esc(S.operatore)} · modalità ${nomeModo()} ·
-  <a href="#" data-act="esci" style="color:var(--muted)">esci</a></p>`;
+  <a href="#" data-act="esci" style="color:var(--muted)">esci</a><br>versione ${VERSIONE}</p>`;
 
 const VIEWS = {
   login() {
@@ -537,7 +539,8 @@ const VIEWS = {
           ${d.residue < 0 ? '<div class="avviso">Usate più drink di quelle portate dagli ingressi.</div>' : ''}
         </div>
         ${lista || '<p class="empty">Nessun ordine per questo tavolo.</p>'}
-        <button class="btn danger block" style="margin-top:24px" data-act="eliminaTavolo">Elimina tavolo</button>`,
+        <button class="btn block" style="margin-top:24px" data-act="rinominaTavolo">Modifica nome</button>
+        <button class="btn danger block" style="margin-top:10px" data-act="eliminaTavolo">Elimina tavolo</button>`,
       footer: '<button class="btn primary" data-act="nuovoOrdine">+ Nuovo ordine</button>',
     };
   },
@@ -579,7 +582,8 @@ const VIEWS = {
           </div>
         </div>
         ${lista ? '<div class="cat">Ingressi registrati</div>' + lista : ''}
-        <button class="btn danger block" style="margin-top:24px" data-act="eliminaTavolo">Elimina tavolo</button>`,
+        <button class="btn block" style="margin-top:24px" data-act="rinominaTavolo">Modifica nome</button>
+        <button class="btn danger block" style="margin-top:10px" data-act="eliminaTavolo">Elimina tavolo</button>`,
     };
   },
 
@@ -894,6 +898,15 @@ const ACT = {
     S.view = isTavoli() ? 'tavolo' : 'ingresso';
     render();
     window.scrollTo(0, 0);
+  },
+  async rinominaTavolo() {
+    const t = tavolo();
+    const nome = prompt('Nome del tavolo ' + t.numero, t.nome || '');
+    if (nome === null || nome.trim() === String(t.nome || '').trim()) return;
+    if (!serataOk()) return;
+    try { await call('rinominaTavolo', { serataId: S.d.serata.id, tavoloId: t.id, nome: nome.trim() }); } catch (e) { return; }
+    toast('Nome aggiornato', true);
+    render();
   },
   async eliminaTavolo() {
     const t = tavolo();
