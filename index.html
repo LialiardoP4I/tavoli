@@ -73,6 +73,22 @@
   th:first-child, td:first-child { text-align: left; }
   th { color: var(--muted); font-weight: 500; font-size: 13px; }
   .quick { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .mappa-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; background: var(--card); border-radius: 14px; margin-bottom: 14px; }
+  .mappa { width: 100%; height: auto; display: block; }
+  .mappa-wrap.zoom .mappa { min-width: 720px; }
+  .mappa-bar { display: flex; justify-content: flex-end; margin: -4px 0 6px; }
+  .mappa .muro { fill: none; stroke: var(--muted); stroke-width: 3; }
+  .mappa .zona { fill: var(--card2); stroke: var(--line); stroke-width: 2; }
+  .mappa .lbl { fill: var(--muted); font-size: 20px; text-anchor: middle; dominant-baseline: middle; }
+  .mappa .tv { cursor: pointer; }
+  .mappa .tv rect { fill: var(--card2); stroke: var(--muted); stroke-width: 2; }
+  .mappa .tv.on rect { fill: var(--accent); stroke: var(--accent); }
+  .mappa .tv.vuoto rect { fill: none; stroke-dasharray: 5 4; }
+  .mappa .tv text { text-anchor: middle; fill: var(--text); }
+  .mappa .tv .num { font-size: 26px; font-weight: 800; }
+  .mappa .tv .nm { font-size: 19px; font-weight: 600; }
+  .mappa .tv .sub { font-size: 17px; }
+  .mappa .tv.vuoto .num { fill: var(--muted); }
   .sync { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); flex: none; }
   .sync.busy { background: var(--warn); } .sync.off { background: var(--bad); }
   .toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 20; max-width: 90%;
@@ -112,6 +128,7 @@ const S = {
   nuovi: null,          // righe della pagina inserimento tavoli: [{numero, nome}]
   ordine: null,         // { id, step, qta: {bottigliaId: n}, contanti, carta, drink, note }
   persone: 1,           // modalità ingressi
+  zoom: LS.get('zoomMappa') === '1',  // piantina ingrandita (scorrevole)
   busy: false,
   sync: 'ok',
 };
@@ -321,7 +338,7 @@ const VIEWS = {
   },
 
   lista() {
-    const cards = S.d.tavoli.map(t => {
+    const card = t => {
       const testa = `<span class="n">${esc(t.numero !== '' && t.numero !== undefined ? t.numero : t.nome)}</span>
         ${t.numero !== '' && t.numero !== undefined && t.nome ? `<span class="nome">${esc(t.nome)}</span>` : ''}`;
       if (isTavoli()) {
@@ -338,7 +355,10 @@ const VIEWS = {
         <span class="kpi">${s.persone} <span class="muted">persone</span></span>
         <span class="muted">${eur(s.importo)}</span>
       </button>`;
-    }).join('');
+    };
+    // Tavoli con numero presente sulla piantina vanno sulla mappa, gli altri nella griglia sotto.
+    const sullaMappa = t => !!POSTI[String(t.numero === undefined ? '' : t.numero).trim()];
+    const cards = S.d.tavoli.filter(t => !sullaMappa(t)).map(card).join('');
 
     let kpi;
     if (isTavoli()) {
@@ -355,7 +375,8 @@ const VIEWS = {
       header: hdr('Serata ' + fmtData(S.d.serata.data), 'menu'),
       body: `<div class="kpis">${kpi}</div>
         <button class="btn block" style="margin-bottom:14px" data-act="nuoviTavoli">+ Aggiungi tavoli</button>
-        ${cards ? `<div class="grid">${cards}</div>` : '<p class="empty">Nessun tavolo.</p>'}`,
+        ${piantina()}
+        ${cards ? `<div class="cat">Altri tavoli</div><div class="grid">${cards}</div>` : ''}`,
       footer: nav('lista'),
     };
   },
@@ -596,6 +617,41 @@ function ricordaPin() {
   LS.set('pin', S.pin);
 }
 
+// Piantina del locale: centro (x, y) di ogni tavolo nel viewBox dell'SVG.
+const POSTI = {
+  1: [612, 244], 2: [612, 331], 3: [535, 456], 4: [448, 456], 5: [361, 456], 6: [262, 341],
+  7: [266, 178], 8: [266, 102], 9: [161, 276], 10: [161, 453], 11: [305, 600],
+};
+const corto = (s, n) => { s = String(s || '').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+
+function piantina() {
+  const perNum = {};
+  S.d.tavoli.forEach(t => { perNum[String(t.numero === undefined ? '' : t.numero).trim()] = t; });
+  const W = 82, H = 72;
+  const box = Object.keys(POSTI).map(n => {
+    const [x, y] = POSTI[n];
+    const r = `<rect x="${x - W / 2}" y="${y - H / 2}" width="${W}" height="${H}" rx="8"/>`;
+    const t = perNum[n];
+    if (!t) return `<g class="tv vuoto" data-act="nuoviTavoli" data-n="${n}">${r}<text class="num" x="${x}" y="${y + 8}">${n}</text></g>`;
+    let sub, on;
+    if (isTavoli()) { const o = sommaOrdini(ordiniTavolo(t.id)); sub = o.n ? eur(o.pagato) : ''; on = o.n > 0; }
+    else { const i = sommaIngressi(ingressiTavolo(t.id)); sub = i.persone ? i.persone + ' pers.' : ''; on = i.persone > 0; }
+    const nome = corto(t.nome, S.zoom ? 9 : 7);
+    return `<g class="tv${on ? ' on' : ''}" data-act="apriTavolo" data-id="${esc(t.id)}">${r}
+      <text class="num" x="${x}" y="${y - (nome || sub ? 10 : -9)}">${n}</text>
+      ${nome ? `<text class="nm" x="${x}" y="${y + 11}">${esc(nome)}</text>` : ''}
+      ${sub ? `<text class="sub" x="${x}" y="${y + (nome ? 29 : 14)}">${esc(sub)}</text>` : ''}</g>`;
+  }).join('');
+  return `<div class="mappa-bar"><button class="btn small" data-act="zoomMappa">${S.zoom ? 'Riduci mappa' : 'Ingrandisci mappa'}</button></div>
+    <div class="mappa-wrap${S.zoom ? ' zoom' : ''}"><svg class="mappa" viewBox="40 50 680 600" xmlns="http://www.w3.org/2000/svg">
+    <path class="muro" d="M222 200 V62 H655 V355 M80 200 V375 M80 200 H190 M80 415 V495 M120 545 V640 H345 M655 355 H705 V660"/>
+    <rect class="zona" x="353" y="72" width="192" height="125"/><text class="lbl" x="449" y="135">CONSOLE</text>
+    <rect class="zona" x="353" y="197" width="192" height="59"/><text class="lbl" x="449" y="227">PALCO</text>
+    <rect class="zona" x="457" y="585" width="161" height="45"/><text class="lbl" x="537" y="608">Bar Grande</text>
+    <text class="lbl" x="690" y="470" transform="rotate(90 690 470)">Ingresso →</text>
+    ${box}</svg></div>`;
+}
+
 const righeVuote = () => Array.from({ length: 5 }, () => ({ numero: '', nome: '' }));
 
 function aggiornaPag() {
@@ -685,7 +741,14 @@ const ACT = {
   },
   vai(ds) { S.view = ds.v; render(); window.scrollTo(0, 0); },
 
-  nuoviTavoli() { S.nuovi = righeVuote(); S.view = 'nuoviTavoli'; render(); window.scrollTo(0, 0); },
+  nuoviTavoli(ds) {
+    S.nuovi = righeVuote();
+    if (ds && ds.n) S.nuovi[0].numero = ds.n;
+    S.view = 'nuoviTavoli';
+    render();
+    window.scrollTo(0, 0);
+    if (ds && ds.n) { const el = document.querySelector('[data-nt="0"][data-f=nome]'); if (el) el.focus(); }
+  },
   aggiungiRiga() { S.nuovi.push({ numero: '', nome: '' }); render(); },
   togliRiga(ds) { S.nuovi.splice(Number(ds.i), 1); if (!S.nuovi.length) S.nuovi.push({ numero: '', nome: '' }); render(); },
   async salvaTavoli() {
@@ -708,6 +771,11 @@ const ACT = {
     render();
   },
 
+  zoomMappa() {
+    S.zoom = !S.zoom;
+    LS.set('zoomMappa', S.zoom ? '1' : '');
+    render();
+  },
   apriTavolo(ds) {
     S.tavoloId = ds.id;
     S.persone = 1;
