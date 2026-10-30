@@ -99,6 +99,8 @@
   .mappa .tv.vuoto .num { fill: var(--muted); }
   .sync { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); flex: none; }
   .sync.busy { background: var(--warn); } .sync.off { background: var(--bad); }
+  .coda { color: var(--warn); font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .badge.invio { background: rgba(255, 184, 77, .18); color: var(--warn); }
   .toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 20; max-width: 90%;
     background: var(--bad); color: #fff; padding: 10px 16px; border-radius: 10px; font-weight: 600; }
   .toast.ok { background: var(--ok); color: #04210f; }
@@ -128,13 +130,13 @@ const LS = {
 const S = {
   modo: LS.get('modo') === 'tavoli' ? 'tavoli' : 'ingressi',  // modalità scelta dal menu
   operatore: LS.get('operatore'),
-  d: null,              // dati dal server (d.modo = 'tavoli' | 'ingressi')
+  server: null,         // ultimi dati ricevuti dal server (d.modo = 'tavoli' | 'ingressi')
+  d: null,              // dati mostrati: quelli del server più ordini/ingressi ancora in coda di invio
   view: 'login',        // login | menu | noSerata | nuoviTavoli | lista | tavolo | ordine | ingresso | riepilogo
   tavoloId: null,
   nuovi: null,          // righe della pagina inserimento tavoli: [{numero, nome}]
   ordine: null,         // { id, step, qta: {bottigliaId: n}, contanti, carta, drink, note }
   persone: 1,           // modalità ingressi
-  ingressoId: null,     // id dell'ingresso in corso: resta lo stesso se si ripete dopo un errore
   dataSerata: '',       // data scelta nella pagina "Apri serata"
   zoom: LS.get('zoomMappa') === '1',  // piantina ingrandita (scorrevole)
   busy: false,
@@ -146,28 +148,35 @@ const S = {
 const API_URL = 'https://script.google.com/macros/s/AKfycbwuCVVV7z-pCK_GDnnrWnW6b86ixKmmTbptEmsaY8MKPHbTqaL2pZjnon6nYmMcqfDx1g/exec';
 const TIMEOUT_MS = 45000;  // il server aspetta fino a 30 s il suo turno per scrivere
 
-function api(action, payload) {
+function api(action, payload, modo) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   return fetch(API_URL, {
     method: 'POST',
-    body: JSON.stringify({ action, payload: payload || {}, modo: S.modo }),
+    body: JSON.stringify({ action, payload: payload || {}, modo: modo || S.modo }),
     signal: ctrl.signal,
   })
     .then(r => {
-      if (!r.ok) throw new Error('Errore del server (' + r.status + '): riprova');
-      return r.json().catch(() => { throw new Error('Risposta non valida dal server: riprova'); });
+      if (!r.ok) throw errRete('Errore del server (' + r.status + '): riprova');
+      return r.json().catch(() => { throw errRete('Risposta non valida dal server: riprova'); });
     }, e => {
-      throw new Error(e && e.name === 'AbortError' ? 'Il server non risponde: riprova' : 'Connessione assente: riprova');
+      throw errRete(e && e.name === 'AbortError' ? 'Il server non risponde: riprova' : 'Connessione assente: riprova');
     })
     .then(r => { if (!r.ok) throw new Error(r.error); return r.data; })
     .finally(() => clearTimeout(timer));
 }
 
+/** Errore di rete o del server Google (non un rifiuto dell'app): l'operazione si può ripetere. */
+function errRete(msg) {
+  const e = new Error(msg);
+  e.rete = true;
+  return e;
+}
+
 // Le risposte possono arrivare in disordine: applico solo quelle più recenti dell'ultima applicata.
 let seqInviata = 0, seqApplicata = 0, scrittureInCorso = 0;
 
-async function call(action, payload, silent) {
+async function call(action, payload, silent, modo) {
   const seq = ++seqInviata;
   const scrive = action !== 'stato';
   if (scrive) scrittureInCorso++;
@@ -175,24 +184,101 @@ async function call(action, payload, silent) {
   try {
     let d;
     for (let tentativo = 1; ; tentativo++) {
-      try { d = await api(action, payload); break; } catch (e) {
+      try { d = await api(action, payload, modo); break; } catch (e) {
         // Server occupato da altri telefoni: non ha scritto nulla, quindi riprovo da solo.
         if (!/^OCCUPATO/.test(e && e.message) || tentativo >= 3) throw e;
         await new Promise(r => setTimeout(r, 500 + Math.random() * 1500));
       }
     }
-    if (seq > seqApplicata) { seqApplicata = seq; S.d = d; }
+    if (seq > seqApplicata) {
+      seqApplicata = seq;
+      S.server = d;
+      S.d = conCoda(d);
+      ricorda();
+      setSync('ok');
+      return S.d;
+    }
     setSync('ok');
     return d;
   } catch (e) {
     setSync('off');
     if (!silent) toast(errMsg(e));
     // Serata chiusa da un altro telefono: lo stato locale si allinea subito (il render porta a "Nessuna serata")
-    if (/serata non è più aperta/.test(errMsg(e)) && S.d) S.d = Object.assign({}, S.d, { serata: null });
+    if (/serata non è più aperta/.test(errMsg(e)) && S.server && S.server.serata &&
+        payload && payload.serataId === S.server.serata.id) {
+      S.server = Object.assign({}, S.server, { serata: null });
+      S.d = conCoda(S.server);
+    }
     throw e;
   } finally {
     if (scrive) scrittureInCorso--;
   }
+}
+
+// ------------------------------------------------------------ coda di invio
+// Ordini e ingressi compaiono subito sul telefono; l'invio al server avviene dietro, uno alla volta.
+// La coda resta salvata sul telefono (anche chiudendo l'app) finché il server non conferma.
+// Ripetere un invio è sicuro: ogni operazione ha il suo id e il server non la registra due volte.
+const coda = (() => { try { const c = JSON.parse(LS.get('coda') || '[]'); return Array.isArray(c) ? c : []; } catch (e) { return []; } })();
+const salvaCoda = () => LS.set('coda', JSON.stringify(coda));
+let invioInCorso = false, riprovaTimer = null;
+
+/** Dati del server più gli elementi in coda della stessa serata (segnati "invio"). */
+function conCoda(d) {
+  if (!d || !d.serata || !coda.length) return d;
+  const out = Object.assign({}, d, { ordini: d.ordini.slice(), ingressi: d.ingressi.slice(), righe: d.righe.slice() });
+  coda.forEach(c => {
+    if (c.payload.serataId !== d.serata.id) return;
+    if (c.tipo === 'ordine' && !out.ordini.some(o => o.id === c.vista.id)) { out.ordini.push(c.vista); out.righe.push(...c.righe); }
+    if (c.tipo === 'ingresso' && !out.ingressi.some(x => x.id === c.vista.id)) out.ingressi.push(c.vista);
+  });
+  return out;
+}
+
+function accoda(c) {
+  coda.push(c);
+  salvaCoda();
+  S.d = conCoda(S.server);
+  inviaCoda();
+}
+
+async function inviaCoda() {
+  if (invioInCorso || !coda.length || !S.operatore) return;
+  invioInCorso = true;
+  clearTimeout(riprovaTimer);
+  try {
+    while (coda.length) {
+      const c = coda[0];
+      try {
+        await call(c.action, c.payload, true, c.modo);
+      } catch (e) {
+        if (e.rete || /^OCCUPATO/.test(e.message)) {
+          riprovaTimer = setTimeout(inviaCoda, 4000);  // rete assente o server occupato: riprovo
+          return;
+        }
+        // Rifiutato dal server (tavolo eliminato, serata chiusa, bottiglia tolta…): lo tolgo e avviso
+        coda.shift();
+        salvaCoda();
+        S.d = conCoda(S.server);
+        ridisegna(true);
+        alert(c.descr + ' NON SALVATO\n\n' + errMsg(e));
+        continue;
+      }
+      coda.shift();
+      salvaCoda();
+      S.d = conCoda(S.server);
+      ridisegna();
+    }
+  } finally {
+    invioInCorso = false;
+  }
+}
+
+window.addEventListener('online', () => inviaCoda());
+
+/** Ultimi dati sul telefono: all'apertura l'app li mostra subito, poi si aggiorna. */
+function ricorda() {
+  try { localStorage.setItem('ultimiDati', JSON.stringify(S.server)); } catch (e) {}
 }
 
 /** La serata può essere chiusa da un altro telefono mentre si lavora. */
@@ -224,6 +310,9 @@ const fmtData = iso => { const p = String(iso || '').slice(0, 10).split('-'); re
 const ora = iso => String(iso || '').slice(11, 16);
 const oggi = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 const nuovoId = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+/** Ora locale nel formato del server (yyyy-MM-ddTHH:mm:ss). */
+const adesso = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 19); };
+let ultimoIngresso = 0;
 const tondo = n => Math.round(num(n) * 100) / 100;
 const diffHtml = n => { n = tondo(n); return n === 0 ? eur(0) : '<span class="' + (n > 0 ? 'pos' : 'neg') + '">' + (n > 0 ? '+' : '−') + eur(Math.abs(n)) + '</span>'; };
 const NOMI_MODO = { tavoli: 'Cambusa', ingressi: 'Ingresso tavoli' };
@@ -295,6 +384,7 @@ const hdr = (title, back) =>
   (back ? '<button class="back" data-act="' + back + '" aria-label="Indietro">‹</button>' : '') +
   '<h1>' + title + '</h1>' +
   (S.d && S.view !== 'login' && S.view !== 'menu' ? '<span class="badge modo">' + nomeModo() + '</span>' : '') +
+  (coda.length ? '<span class="coda">' + coda.length + ' in invio</span>' : '') +
   '<span class="sync ' + S.sync + '" title="Sincronizzazione"></span>';
 
 const nav = cur =>
@@ -425,12 +515,12 @@ const VIEWS = {
       const ann = o.stato === 'annullato';
       return `<div class="card ordine${ann ? ' annullato' : ''}">
         <div class="row"><b>${ora(o.timestamp)}</b><span class="muted" style="flex:1">${esc(o.operatore)}</span>
-          <span class="badge">${ann ? 'ANNULLATO' : esc(o.metodo)}</span></div>
+          <span class="badge${o.invio ? ' invio' : ''}">${ann ? 'ANNULLATO' : o.invio ? 'invio…' : esc(o.metodo)}</span></div>
         <div class="det">${esc(o.dettaglio)}</div>
         <div class="row"><span>Listino ${eur(o.totale_listino)}</span><span>Pagato <b>${eur(o.totale_pagato)}</b></span></div>
         ${pag.length ? `<div class="muted">${pag.join(' · ')}</div>` : ''}
         ${o.note ? `<div class="muted">Nota: ${esc(o.note)}</div>` : ''}
-        ${ann ? '' : `<div style="text-align:right;margin-top:8px"><button class="btn danger small" data-act="annullaOrdine" data-id="${esc(o.id)}">Annulla ordine</button></div>`}
+        ${ann || o.invio ? '' : `<div style="text-align:right;margin-top:8px"><button class="btn danger small" data-act="annullaOrdine" data-id="${esc(o.id)}">Annulla ordine</button></div>`}
       </div>`;
     }).join('');
 
@@ -462,9 +552,9 @@ const VIEWS = {
       const ann = x.stato === 'annullato';
       return `<div class="card ordine${ann ? ' annullato' : ''}">
         <div class="row"><b>${ora(x.timestamp)}</b><span class="muted" style="flex:1">${esc(x.operatore)}</span>
-          <span class="badge">${ann ? 'ANNULLATO' : esc(x.metodo)}</span></div>
+          <span class="badge${x.invio ? ' invio' : ''}">${ann ? 'ANNULLATO' : x.invio ? 'invio…' : esc(x.metodo)}</span></div>
         <div class="row det"><span>${x.persone} ${num(x.persone) === 1 ? 'persona' : 'persone'}</span><span>${eur(x.importo)}</span></div>
-        ${ann ? '' : `<div style="text-align:right"><button class="btn danger small" data-act="annullaIngresso" data-id="${esc(x.id)}">Annulla</button></div>`}
+        ${ann || x.invio ? '' : `<div style="text-align:right"><button class="btn danger small" data-act="annullaIngresso" data-id="${esc(x.id)}">Annulla</button></div>`}
       </div>`;
     }).join('');
 
@@ -484,8 +574,8 @@ const VIEWS = {
           </div>
           <div class="muted">${S.persone} × ${eur(S.d.prezzoIngresso)} = <b style="color:var(--text)">${eur(importo)}</b></div>
           <div class="row" style="margin-top:14px">
-            <button class="btn okb huge" style="flex:1" data-act="ingresso" data-m="Contanti"${S.busy ? ' disabled' : ''}>Contanti</button>
-            <button class="btn primary huge" style="flex:1" data-act="ingresso" data-m="POS"${S.busy ? ' disabled' : ''}>POS</button>
+            <button class="btn okb huge" style="flex:1" data-act="ingresso" data-m="Contanti">Contanti</button>
+            <button class="btn primary huge" style="flex:1" data-act="ingresso" data-m="POS">POS</button>
           </div>
         </div>
         ${lista ? '<div class="cat">Ingressi registrati</div>' + lista : ''}
@@ -555,7 +645,7 @@ const VIEWS = {
         <div class="card" id="pagSummary"></div>
         <label for="nota">Note (facoltative)</label>
         <textarea id="nota" data-pag="note" placeholder="es. sconto amico, omaggio…">${esc(o.note)}</textarea>`,
-      footer: `<button class="btn primary" data-act="conferma"${S.busy ? ' disabled' : ''}>${S.busy ? 'Salvataggio…' : 'Conferma ordine'}</button>`,
+      footer: '<button class="btn primary" data-act="conferma">Conferma ordine</button>',
       after: aggiornaPag,
     };
   },
@@ -736,16 +826,16 @@ const ACT = {
     render();
     window.scrollTo(0, 0);
   },
-  async entra(ds) {
-    const m = ds.m;
-    if (S.d.modo === m) { S.view = 'lista'; render(); window.scrollTo(0, 0); return; }
-    const prima = S.modo;
-    S.modo = m;
-    try { await call('stato'); } catch (e) { S.modo = prima; return; }
-    LS.set('modo', m);
+  entra(ds) {
+    // Cambio immediato: i dati sono gli stessi per le due modalità, il server conferma dietro.
+    S.modo = ds.m;
+    LS.set('modo', ds.m);
+    S.server = Object.assign({}, S.server, { modo: ds.m });
+    S.d = conCoda(S.server);
     S.view = 'lista';
     render();
     window.scrollTo(0, 0);
+    aggiorna();
   },
   async apriSerata() {
     try { await call('apriSerata', { data: $('dataSerata').value }); } catch (e) { return; }
@@ -801,7 +891,6 @@ const ACT = {
   apriTavolo(ds) {
     S.tavoloId = ds.id;
     S.persone = 1;
-    S.ingressoId = null;
     S.view = isTavoli() ? 'tavolo' : 'ingresso';
     render();
     window.scrollTo(0, 0);
@@ -826,29 +915,29 @@ const ACT = {
 
   // --- ingressi
   persone(ds) { S.persone = Math.max(1, Math.min(50, S.persone + Number(ds.d))); render(); },
-  async ingresso(ds) {
-    if (S.busy || !serataOk()) return;
-    // Stesso id finché l'ingresso non risulta salvato: se la risposta si perde e si ritocca, il server non lo duplica.
-    S.ingressoId = S.ingressoId || nuovoId('I');
-    S.busy = true;
-    render();
+  ingresso(ds) {
+    if (!serataOk()) return;
+    // Doppio tocco involontario: un secondo ingresso uguale entro un secondo e mezzo non viene registrato.
+    if (Date.now() - ultimoIngresso < 1500) return;
+    ultimoIngresso = Date.now();
+    const t = tavolo();
     const persone = S.persone;
-    let d;
-    try {
-      d = await call('creaIngresso', {
-        id: S.ingressoId, serataId: S.d.serata.id, tavoloId: S.tavoloId,
-        persone, metodo: ds.m, operatore: S.operatore,
-      });
-    } catch (e) {
-      S.busy = false;
-      render();
-      return;
-    }
-    S.busy = false;
-    S.ingressoId = null;
+    const payload = {
+      id: nuovoId('I'), serataId: S.d.serata.id, tavoloId: t.id,
+      persone, metodo: ds.m, operatore: S.operatore,
+    };
+    const prezzo = S.d.prezzoIngresso;
+    accoda({
+      tipo: 'ingresso', action: 'creaIngresso', modo: 'ingressi', payload,
+      descr: 'Ingresso tavolo ' + t.etichetta + ' (' + persone + ' ' + ds.m + ')',
+      vista: {
+        id: payload.id, serata_id: payload.serataId, tavolo_id: t.id, tavolo: t.etichetta, timestamp: adesso(),
+        operatore: S.operatore, persone, metodo: ds.m, prezzo_unit: prezzo, importo: tondo(persone * prezzo),
+        drink: persone * S.d.drinkPerIngresso, stato: 'attivo', invio: true,
+      },
+    });
     S.persone = 1;
-    if (d && d.giaRegistrato) toast('Ingresso già registrato al tentativo precedente: controlla l\'elenco');
-    else toast('+' + persone + ' ' + (persone === 1 ? 'persona' : 'persone') + ' · ' + ds.m, true);
+    toast('+' + persone + ' ' + (persone === 1 ? 'persona' : 'persone') + ' · ' + ds.m, true);
     render();
   },
   async annullaIngresso(ds) {
@@ -895,7 +984,7 @@ const ACT = {
     if (ds.m === 'drink') o.drink = Math.ceil(listino / S.d.valoreDrink);
     render();
   },
-  async conferma() {
+  conferma() {
     const o = S.ordine;
     for (const k of ['contanti', 'carta']) {
       const v = String(o[k]).trim();
@@ -905,31 +994,46 @@ const ACT = {
     const residue = drinkTavolo(S.tavoloId).residue;
     if (o.drink > residue && !confirm('Il tavolo ha solo ' + residue + ' drink residue dagli ingressi, ne stai usando ' + o.drink + '. Confermare comunque?')) return;
     if (!serataOk()) return;
-    S.busy = true;
-    render();
-    let d;
-    try {
-      d = await call('creaOrdine', {
-        id: o.id,
-        serataId: S.d.serata.id,
-        tavoloId: S.tavoloId,
-        righe: Object.keys(o.qta).map(id => ({ bottigliaId: id, qta: o.qta[id] })),
-        contanti: o.contanti,
-        carta: o.carta,
-        nDrink: o.drink,
-        note: o.note,
-        operatore: S.operatore,
-      });
-    } catch (e) {
-      S.busy = false;
-      render();
-      return;
-    }
-    S.busy = false;
+    const t = tavolo();
+    const payload = {
+      id: o.id,
+      serataId: S.d.serata.id,
+      tavoloId: t.id,
+      righe: Object.keys(o.qta).map(id => ({ bottigliaId: id, qta: o.qta[id] })),
+      contanti: o.contanti,
+      carta: o.carta,
+      nDrink: o.drink,
+      note: o.note,
+      operatore: S.operatore,
+    };
+    // Come lo scriverà il server: compare subito nel tavolo, segnato "invio…"
+    const bott = S.d.bottiglie.filter(b => o.qta[b.id]);
+    const listino = tondo(totaleCarrello().listino);
+    const valDrink = tondo(o.drink * S.d.valoreDrink);
+    const pagato = tondo(num(o.contanti) + num(o.carta) + valDrink);
+    const metodi = [];
+    if (num(o.contanti) > 0) metodi.push('Contanti');
+    if (num(o.carta) > 0) metodi.push('Carta');
+    if (o.drink > 0) metodi.push('Drink');
+    accoda({
+      tipo: 'ordine', action: 'creaOrdine', modo: 'tavoli', payload,
+      descr: 'Ordine tavolo ' + t.etichetta + ' (' + eur(listino) + ')',
+      vista: {
+        id: o.id, serata_id: payload.serataId, tavolo_id: t.id, tavolo: t.etichetta, timestamp: adesso(),
+        operatore: S.operatore, dettaglio: bott.map(b => o.qta[b.id] + '× ' + b.nome).join(', '),
+        n_bottiglie: totaleCarrello().pezzi, totale_listino: listino, contanti: tondo(o.contanti), carta: tondo(o.carta),
+        n_drink: o.drink, valore_drink: valDrink, totale_pagato: pagato, differenza: tondo(pagato - listino),
+        metodo: !metodi.length ? 'Non pagato' : metodi.length === 1 ? metodi[0] : 'Mix (' + metodi.join(' + ') + ')',
+        stato: 'attivo', note: String(o.note || '').trim(), invio: true,
+      },
+      righe: bott.map(b => ({
+        ordine_id: o.id, serata_id: payload.serataId, tavolo: t.etichetta, categoria: b.categoria, bottiglia: b.nome,
+        qta: o.qta[b.id], prezzo_unit: b.prezzo, totale: b.prezzo * o.qta[b.id], stato: 'attivo',
+      })),
+    });
     S.ordine = null;
     S.view = 'tavolo';
-    if (d && d.giaRegistrato) toast('Ordine già registrato al tentativo precedente: controlla che sia giusto');
-    else toast('Ordine salvato', true);
+    toast('Ordine registrato', true);
     render();
     window.scrollTo(0, 0);
   },
@@ -968,22 +1072,38 @@ async function aggiorna() {
   let d;
   try { d = await call('stato', null, true); } catch (e) { return; } finally { pollInCorso = false; }
   if (d !== S.d) return;  // risposta superata da una più recente
+  ridisegna();
+}
+
+/** Ridisegna con i dati nuovi, ma non durante un ordine, l'inserimento tavoli o mentre si scrive. */
+function ridisegna(sempre) {
+  if (S.view === 'login') return;
   const typing = ['INPUT', 'TEXTAREA'].includes((document.activeElement || {}).tagName);
-  // Durante un ordine, l'inserimento tavoli o mentre si scrive non ridisegno: i dati arrivano comunque.
   if (S.view === 'ordine' || S.view === 'nuoviTavoli' || typing) return;
-  const firma = JSON.stringify(S.d);
-  if (firma === ultimoDisegnato) return;  // niente di nuovo: lo schermo resta com'è
+  const firma = JSON.stringify(S.d) + coda.length;
+  if (!sempre && firma === ultimoDisegnato) return;  // niente di nuovo: lo schermo resta com'è
   ultimoDisegnato = firma;
   render();
 }
 
-setInterval(() => { if (!document.hidden) aggiorna(); }, 8000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) aggiorna(); });
+setInterval(() => { if (!document.hidden) aggiorna(); }, 5000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { inviaCoda(); aggiorna(); } });
 
 // ------------------------------------------------------------ avvio
 (async function start() {
   ['pin', 'pin_tavoli', 'pin_ingressi'].forEach(k => LS.set(k, ''));  // PIN delle versioni precedenti
   if (S.operatore) {
+    // Apertura immediata con gli ultimi dati del telefono; poi l'aggiornamento dal server.
+    try { S.server = JSON.parse(LS.get('ultimiDati') || 'null'); } catch (e) { S.server = null; }
+    if (S.server && S.server.modo === S.modo) {
+      S.d = conCoda(S.server);
+      S.view = 'menu';
+      setSync('busy');
+      render();
+      inviaCoda();
+      aggiorna();
+      return;
+    }
     try {
       await call('stato', null, true);
       S.view = 'menu';
@@ -992,6 +1112,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) aggi
     }
   }
   render();
+  inviaCoda();
 })();
 </script>
 </body>
