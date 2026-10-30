@@ -320,8 +320,9 @@ const VIEWS = {
     const o = sommaOrdini(S.d.ordini);
     const voce = (m, ico, titolo, info) => `<button class="menu-card" data-act="entra" data-m="${m}">
         <span class="ico">${ico}</span>
-        <span><span class="t">${titolo}</span><br><span class="muted">${info}</span></span>
-        <span class="freccia muted">${S.pins[m] ? '&rsaquo;' : '&#128274;'}</span>
+        <span><span class="t">${titolo}</span><br><span class="muted">${info}</span>
+          ${pinDi(m) ? `<br><span class="muted">PIN: <b style="color:var(--text)">${esc(pinDi(m))}</b></span>` : ''}</span>
+        <span class="freccia muted">${pinDi(m) ? '&rsaquo;' : '&#128274;'}</span>
       </button>`;
     const formPin = S.chiediPin ? `<div class="card">
         <label for="pin2">PIN ${NOMI_MODO[S.chiediPin]}</label>
@@ -652,6 +653,11 @@ function render() {
   if (v.after) v.after();
 }
 
+/** PIN di una modalità: quello già usato su questo telefono, altrimenti quello mandato dal server. */
+function pinDi(m) {
+  return S.pins[m] || (S.d && S.d.pin && S.d.pin[m]) || '';
+}
+
 /** Salva il PIN in uso sotto la modalità che ha aperto. */
 function ricordaPin() {
   S.pins[S.d.modo] = S.pin;
@@ -763,9 +769,9 @@ const ACT = {
   async entra(ds) {
     const m = ds.m;
     if (S.d.modo === m) { S.view = 'lista'; render(); window.scrollTo(0, 0); return; }
-    if (!S.pins[m]) { S.chiediPin = m; S.pin2 = ''; render(); return; }
+    if (!pinDi(m)) { S.chiediPin = m; S.pin2 = ''; render(); return; }
     const prima = S.pin;
-    S.pin = S.pins[m];
+    S.pin = pinDi(m);
     try { await call('stato', null, true); } catch (e) {
       S.pin = prima;
       if (errMsg(e) !== 'PIN errato') { toast(errMsg(e)); return; }  // rete: il PIN salvato resta
@@ -777,7 +783,7 @@ const ACT = {
       render();
       return;
     }
-    LS.set('pin', S.pin);
+    ricordaPin();
     S.chiediPin = null;
     S.view = 'lista';
     render();
