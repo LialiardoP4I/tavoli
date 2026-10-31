@@ -343,7 +343,7 @@ const adesso = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.get
 let ultimoIngresso = 0;
 const tondo = n => Math.round(num(n) * 100) / 100;
 const diffHtml = n => { n = tondo(n); return n === 0 ? eur(0) : '<span class="' + (n > 0 ? 'pos' : 'neg') + '">' + (n > 0 ? '+' : '−') + eur(Math.abs(n)) + '</span>'; };
-const VERSIONE = '31/10 nomi interi';  // mostrata in fondo: se non è questa, ricaricare la pagina
+const VERSIONE = '31/10 PT';  // mostrata in fondo: se non è questa, ricaricare la pagina
 const NOMI_MODO = { tavoli: 'Cambusa', ingressi: 'Ingresso tavoli' };
 const isTavoli = () => S.d && S.d.modo === 'tavoli';
 const nomeModo = () => NOMI_MODO[isTavoli() ? 'tavoli' : 'ingressi'];
@@ -384,9 +384,10 @@ function sommaIngressi(ingressi) {
     a.persone += num(x.persone);
     a.importo += num(x.importo);
     a.drink += num(x.drink);
-    if (x.metodo === 'POS') a.pos += num(x.importo); else a.contanti += num(x.importo);
+    if (x.metodo === 'PT') a.pt += num(x.persone);
+    else if (x.metodo === 'POS') a.pos += num(x.importo); else a.contanti += num(x.importo);
     return a;
-  }, { persone: 0, importo: 0, drink: 0, contanti: 0, pos: 0 });
+  }, { persone: 0, importo: 0, drink: 0, contanti: 0, pos: 0, pt: 0 });
 }
 
 /** Drink da ingressi del tavolo: disponibili, usate negli ordini, residue. */
@@ -602,10 +603,11 @@ const VIEWS = {
             <span class="q">${S.persone}</span>
             <button data-act="persone" data-d="1" aria-label="Più">+</button>
           </div>
-          <div class="muted">${S.persone} × ${eur(S.d.prezzoIngresso)} = <b style="color:var(--text)">${eur(importo)}</b></div>
+          <div class="muted">${S.persone} × ${eur(S.d.prezzoIngresso)} = <b style="color:var(--text)">${eur(importo)}</b> · PT = senza pagare</div>
           <div class="row" style="margin-top:14px">
             <button class="btn okb huge" style="flex:1" data-act="ingresso" data-m="Contanti">Contanti</button>
             <button class="btn primary huge" style="flex:1" data-act="ingresso" data-m="POS">POS</button>
+            <button class="btn huge" style="flex:.7" data-act="ingresso" data-m="PT" title="Entra senza pagare">PT</button>
           </div>
         </div>
         ${lista ? '<div class="cat">Ingressi registrati</div>' + lista : ''}
@@ -712,6 +714,7 @@ const VIEWS = {
         <div class="card">
           <div class="row"><span>Contanti</span><b>${eur(g.contanti)}</b></div>
           <div class="row"><span>POS</span><b>${eur(g.pos)}</b></div>
+          <div class="row"><span>PT (entrati senza pagare)</span><b>${g.pt} ${g.pt === 1 ? 'persona' : 'persone'}</b></div>
           <div class="row"><span>Drink date ai tavoli</span><b>${g.drink}</b></div>
         </div>
         <div class="cat">${NOMI_MODO.tavoli}</div>
@@ -1023,14 +1026,15 @@ const ACT = {
       id: nuovoId('I'), serataId: S.d.serata.id, tavoloId: t.id,
       persone, metodo: ds.m, operatore: S.operatore,
     };
-    const prezzo = S.d.prezzoIngresso;
+    const pt = ds.m === 'PT';  // entra senza pagare: niente incasso, niente drink
+    const prezzo = pt ? 0 : S.d.prezzoIngresso;
     accoda({
       tipo: 'ingresso', action: 'creaIngresso', modo: 'ingressi', payload,
       descr: 'Ingresso tavolo ' + t.etichetta + ' (' + persone + ' ' + ds.m + ')',
       vista: {
         id: payload.id, serata_id: payload.serataId, tavolo_id: t.id, tavolo: t.etichetta, timestamp: adesso(),
         operatore: S.operatore, persone, metodo: ds.m, prezzo_unit: prezzo, importo: tondo(persone * prezzo),
-        drink: persone * S.d.drinkPerIngresso, stato: 'attivo', invio: true,
+        drink: pt ? 0 : persone * S.d.drinkPerIngresso, stato: 'attivo', invio: true,
       },
     });
     S.persone = 1;
