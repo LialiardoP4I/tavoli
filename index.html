@@ -18,7 +18,7 @@
   html { touch-action: manipulation; }  /* niente attesa del doppio tocco sui telefoni */
   header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line);
     padding: 12px 16px; display: flex; align-items: center; gap: 10px; }
-  header h1 { flex: 1; margin: 0; font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header h1 { flex: 1; margin: 0; font-size: 18px; line-height: 1.25; overflow-wrap: anywhere; }
   main { max-width: 640px; margin: 0 auto; padding: 14px 16px 120px; }
   .btn { border: 0; border-radius: 12px; padding: 14px 16px; font-size: 16px; font-weight: 600; background: var(--card2); }
   .btn.primary { background: var(--accent); color: #fff; }
@@ -95,9 +95,11 @@
   .mappa .tv .dr.neg text { fill: #fff; }
   .mappa-nota { margin: -6px 0 14px; }
   .mappa .tv text { text-anchor: middle; fill: var(--text); }
-  .mappa .tv .num { font-size: 26px; font-weight: 800; }
-  .mappa .tv .nm { font-size: 19px; font-weight: 600; }
-  .mappa .tv .sub { font-size: 17px; }
+  .mappa .tv .num { font-size: 22px; font-weight: 800; }
+  .mappa .tv .nm { font-size: 16px; font-weight: 600; }
+  .mappa .tv .sub { font-size: 14px; }
+  .mappa .tv.vuoto .num { font-size: 26px; }
+  .mappa .tv .num.pieno { font-size: 18px; }
   .mappa .tv.vuoto .num { fill: var(--muted); }
   .sync { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); flex: none; }
   .sync.busy { background: var(--warn); } .sync.off { background: var(--bad); }
@@ -341,7 +343,7 @@ const adesso = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.get
 let ultimoIngresso = 0;
 const tondo = n => Math.round(num(n) * 100) / 100;
 const diffHtml = n => { n = tondo(n); return n === 0 ? eur(0) : '<span class="' + (n > 0 ? 'pos' : 'neg') + '">' + (n > 0 ? '+' : '−') + eur(Math.abs(n)) + '</span>'; };
-const VERSIONE = '31/10 piantina 13';  // mostrata in fondo: se non è questa, ricaricare la pagina
+const VERSIONE = '31/10 nomi interi';  // mostrata in fondo: se non è questa, ricaricare la pagina
 const NOMI_MODO = { tavoli: 'Cambusa', ingressi: 'Ingresso tavoli' };
 const isTavoli = () => S.d && S.d.modo === 'tavoli';
 const nomeModo = () => NOMI_MODO[isTavoli() ? 'tavoli' : 'ingressi'];
@@ -797,7 +799,26 @@ const POSTI = {
   1: [612, 244], 2: [612, 331], 3: [535, 456], 4: [448, 456], 5: [361, 456], 6: [262, 375],
   7: [264, 262], 8: [266, 178], 9: [266, 102], 10: [305, 600], 11: [209, 600], 12: [149, 276], 13: [149, 453],
 };
-const corto = (s, n) => { const c = Array.from(String(s || '').trim()); return c.length > n ? c.slice(0, n - 1).join('') + '…' : c.join(''); };
+const lungo = s => Array.from(s).length;
+
+/** Nome del tavolo su al massimo due righe (a capo tra le parole; una parola troppo lunga si spezza col trattino). */
+function righeNome(s, max) {
+  const parole = String(s || '').trim().split(/\s+/).filter(Boolean);
+  if (!parole.length) return [];
+  if (parole.length === 1) {
+    const c = Array.from(parole[0]);
+    if (c.length <= max) return [parole[0]];
+    const meta = Math.ceil(c.length / 2);
+    return [c.slice(0, meta).join('') + '-', c.slice(meta).join('')];
+  }
+  const righe = [parole[0]];
+  parole.slice(1).forEach(p => {
+    const i = righe.length - 1;
+    if (lungo(righe[i] + ' ' + p) <= max || righe.length === 2) righe[i] += ' ' + p;
+    else righe.push(p);
+  });
+  return righe;
+}
 
 /** Assegna i tavoli ai posti della mappa: un solo tavolo per posto, gli eventuali doppioni vanno in "Altri tavoli". */
 function postiMappa() {
@@ -831,11 +852,19 @@ function piantina(posti) {
         credito = d.residue > 0;
       }
     } else { const i = sommaIngressi(ingressiTavolo(t.id)); sub = i.persone ? i.persone + ' pers.' : ''; on = i.persone > 0; }
-    const nome = corto(t.nome, S.zoom ? 9 : 7);
-    return `<g class="tv${on ? ' on' : ''}${credito ? ' credito' : ''}" data-act="apriTavolo" data-id="${esc(t.id)}">${r}${drink}
-      <text class="num" x="${x}" y="${y - (nome || sub ? 10 : -9)}">${n}</text>
-      ${nome ? `<text class="nm" x="${x}" y="${y + 11}">${esc(nome)}</text>` : ''}
-      ${sub ? `<text class="sub" x="${x}" y="${y + (nome ? 29 : 14)}">${esc(sub)}</text>` : ''}</g>`;
+    // Righe impilate al centro del riquadro: numero, nome (1-2 righe, mai tagliato), totale
+    const MAX = 9;  // caratteri per riga del nome a dimensione piena; oltre, il testo si stringe
+    const righe = [{ cls: 'num', txt: String(n), h: 22 }]
+      .concat(righeNome(t.nome, MAX).map(txt => ({ cls: 'nm', txt, h: 17 })))
+      .concat(sub ? [{ cls: 'sub', txt: sub, h: 15 }] : []);
+    if (righe.length === 4) Object.assign(righe[0], { cls: 'num pieno', h: 18 });  // riquadro pieno: numero più piccolo
+    let yy = y - righe.reduce((a, r) => a + r.h, 0) / 2;
+    const testi = righe.map(r => {
+      yy += r.h;
+      const stretto = r.cls === 'nm' && lungo(r.txt) > MAX ? ` textLength="${W - 8}" lengthAdjust="spacingAndGlyphs"` : '';
+      return `<text class="${r.cls}" x="${x}" y="${(yy - r.h * 0.22).toFixed(1)}"${stretto}>${esc(r.txt)}</text>`;
+    }).join('');
+    return `<g class="tv${on ? ' on' : ''}${credito ? ' credito' : ''}" data-act="apriTavolo" data-id="${esc(t.id)}">${r}${testi}${drink}</g>`;
   }).join('');
   return `<div class="mappa-bar"><button class="btn small" data-act="zoomMappa">${S.zoom ? 'Riduci mappa' : 'Ingrandisci mappa'}</button></div>
     <div class="mappa-wrap${S.zoom ? ' zoom' : ''}"><svg class="mappa" viewBox="40 50 680 600" xmlns="http://www.w3.org/2000/svg">
