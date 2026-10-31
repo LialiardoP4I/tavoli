@@ -79,6 +79,7 @@
   .mappa-wrap.zoom .mappa { min-width: 720px; }
   .mappa-bar { display: flex; justify-content: flex-end; margin: -4px 0 6px; }
   .mappa .muro { fill: none; stroke: var(--muted); stroke-width: 3; }
+  .mappa .parete { fill: none; stroke: var(--muted); stroke-width: 2; }  /* paretina con archi tra 6/7 e 12/13 */
   .mappa .zona { fill: var(--card2); stroke: var(--line); stroke-width: 2; }
   .mappa .lbl { fill: var(--muted); font-size: 20px; text-anchor: middle; dominant-baseline: middle; }
   .mappa .tv { cursor: pointer; }
@@ -340,7 +341,7 @@ const adesso = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.get
 let ultimoIngresso = 0;
 const tondo = n => Math.round(num(n) * 100) / 100;
 const diffHtml = n => { n = tondo(n); return n === 0 ? eur(0) : '<span class="' + (n > 0 ? 'pos' : 'neg') + '">' + (n > 0 ? '+' : '−') + eur(Math.abs(n)) + '</span>'; };
-const VERSIONE = '30/10 17:30';  // mostrata in fondo: se non è questa, ricaricare la pagina
+const VERSIONE = '31/10 piantina 13';  // mostrata in fondo: se non è questa, ricaricare la pagina
 const NOMI_MODO = { tavoli: 'Cambusa', ingressi: 'Ingresso tavoli' };
 const isTavoli = () => S.d && S.d.modo === 'tavoli';
 const nomeModo = () => NOMI_MODO[isTavoli() ? 'tavoli' : 'ingressi'];
@@ -793,8 +794,8 @@ window.addEventListener('resize', () => {
 
 // Piantina del locale: centro (x, y) di ogni tavolo nel viewBox dell'SVG.
 const POSTI = {
-  1: [612, 244], 2: [612, 331], 3: [535, 456], 4: [448, 456], 5: [361, 456], 6: [262, 341],
-  7: [266, 178], 8: [266, 102], 9: [161, 276], 10: [161, 453], 11: [305, 600],
+  1: [612, 244], 2: [612, 331], 3: [535, 456], 4: [448, 456], 5: [361, 456], 6: [262, 375],
+  7: [264, 262], 8: [266, 178], 9: [266, 102], 10: [305, 600], 11: [209, 600], 12: [149, 276], 13: [149, 453],
 };
 const corto = (s, n) => { const c = Array.from(String(s || '').trim()); return c.length > n ? c.slice(0, n - 1).join('') + '…' : c.join(''); };
 
@@ -839,6 +840,7 @@ function piantina(posti) {
   return `<div class="mappa-bar"><button class="btn small" data-act="zoomMappa">${S.zoom ? 'Riduci mappa' : 'Ingrandisci mappa'}</button></div>
     <div class="mappa-wrap${S.zoom ? ' zoom' : ''}"><svg class="mappa" viewBox="40 50 680 600" xmlns="http://www.w3.org/2000/svg">
     <path class="muro" d="M222 200 V62 H655 V355 M80 200 V375 M80 200 H190 M80 415 V495 M120 545 V640 H345 M655 355 H705 V660"/>
+    <path class="parete" d="M206 222 V411"/>
     <rect class="zona" x="353" y="72" width="192" height="125"/><text class="lbl" x="449" y="135">CONSOLE</text>
     <rect class="zona" x="353" y="197" width="192" height="59"/><text class="lbl" x="449" y="227">PALCO</text>
     <rect class="zona" x="457" y="585" width="161" height="45"/><text class="lbl" x="537" y="608">Bar Grande</text>
