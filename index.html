@@ -63,8 +63,11 @@
   .nt { display: grid; grid-template-columns: 80px 1fr 40px; gap: 8px; margin-bottom: 8px; align-items: center; }
   .nt input { padding: 12px; }
   .nt .x { background: none; border: 0; color: var(--muted); font-size: 22px; }
-  .ordine.annullato { opacity: .45; }
-  .ordine.annullato .det { text-decoration: line-through; }
+  .ordine.annullato, .ordine.modificato { opacity: .45; }
+  .ordine.annullato .det, .ordine.modificato .det { text-decoration: line-through; }
+  .lib { display: grid; grid-template-columns: 1fr 96px 40px; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .lib input { padding: 12px; }
+  .lib .x { background: none; border: 0; color: var(--muted); font-size: 22px; }
   .det { margin: 6px 0; font-weight: 600; }
   .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--card2); font-size: 12px; white-space: nowrap; }
   .badge.modo { background: var(--accent); color: #fff; text-transform: uppercase; letter-spacing: .05em; }
@@ -163,7 +166,7 @@ const S = {
   view: 'login',        // login | menu | noSerata | nuoviTavoli | lista | tavolo | ordine | ingresso | riepilogo
   tavoloId: null,
   nuovi: null,          // righe della pagina inserimento tavoli: [{numero, nome}]
-  ordine: null,         // { id, step, qta: {bottigliaId: n}, contanti, carta, drink, note }
+  ordine: null,         // { id, step, qta: {bottigliaId: n}, libere: [{descr, importo}], contanti, carta, drink, sconto, note, sostituisce }
   persone: 1,           // modalità ingressi
   dataSerata: '',       // data scelta nella pagina "Apri serata"
   zoom: LS.get('zoomMappa') === '1',  // piantina ingrandita (scorrevole)
@@ -257,7 +260,14 @@ function conCoda(d) {
   const out = Object.assign({}, d, { ordini: d.ordini.slice(), ingressi: d.ingressi.slice(), righe: d.righe.slice() });
   coda.forEach(c => {
     if (c.payload.serataId !== d.serata.id) return;
-    if (c.tipo === 'ordine' && !out.ordini.some(o => o.id === c.vista.id)) { out.ordini.push(c.vista); out.righe.push(...c.righe); }
+    if (c.tipo === 'ordine' && !out.ordini.some(o => o.id === c.vista.id)) {
+      const vecchio = c.payload.sostituisce;
+      if (vecchio) {  // modifica in invio: il vecchio ordine non conta già più
+        out.ordini = out.ordini.map(o => o.id === vecchio ? Object.assign({}, o, { stato: 'modificato' }) : o);
+        out.righe = out.righe.filter(r => r.ordine_id !== vecchio);
+      }
+      out.ordini.push(c.vista); out.righe.push(...c.righe);
+    }
     if (c.tipo === 'ingresso' && !out.ingressi.some(x => x.id === c.vista.id)) out.ingressi.push(c.vista);
   });
   return out;
@@ -343,7 +353,7 @@ const adesso = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.get
 let ultimoIngresso = 0;
 const tondo = n => Math.round(num(n) * 100) / 100;
 const diffHtml = n => { n = tondo(n); return n === 0 ? eur(0) : '<span class="' + (n > 0 ? 'pos' : 'neg') + '">' + (n > 0 ? '+' : '−') + eur(Math.abs(n)) + '</span>'; };
-const VERSIONE = '31/10 PT';  // mostrata in fondo: se non è questa, ricaricare la pagina
+const VERSIONE = '01/11 sconti';  // mostrata in fondo: se non è questa, ricaricare la pagina
 const NOMI_MODO = { tavoli: 'Cambusa', ingressi: 'Ingresso tavoli' };
 const isTavoli = () => S.d && S.d.modo === 'tavoli';
 const nomeModo = () => NOMI_MODO[isTavoli() ? 'tavoli' : 'ingressi'];
@@ -365,18 +375,23 @@ const ordiniTavolo = id => S.d.ordini.filter(o => o.tavolo_id === id);
 const ingressiTavolo = id => S.d.ingressi.filter(x => x.tavolo_id === id);
 const tavolo = () => S.d.tavoli.find(t => t.id === S.tavoloId);
 
+/** Ordine che conta nei totali: non annullato e non sostituito da una modifica. */
+const ordineAttivo = o => o.stato !== 'annullato' && o.stato !== 'modificato';
+const VOCE_LIBERA = 'Voce libera';
+
 function sommaOrdini(ordini) {
-  return attivi(ordini).reduce((a, o) => {
+  return ordini.filter(ordineAttivo).reduce((a, o) => {
     a.n += 1;
     a.bott += num(o.n_bottiglie);
     a.listino += num(o.totale_listino);
+    a.sconto += num(o.sconto);
     a.contanti += num(o.contanti);
     a.carta += num(o.carta);
     a.drink += num(o.n_drink);
     a.valDrink += num(o.valore_drink);
     a.pagato += num(o.totale_pagato);
     return a;
-  }, { n: 0, bott: 0, listino: 0, contanti: 0, carta: 0, drink: 0, valDrink: 0, pagato: 0 });
+  }, { n: 0, bott: 0, listino: 0, sconto: 0, contanti: 0, carta: 0, drink: 0, valDrink: 0, pagato: 0 });
 }
 
 function sommaIngressi(ingressi) {
@@ -397,11 +412,24 @@ function drinkTavolo(id) {
   return { disp, usate, residue: disp - usate };
 }
 
+/** Voci libere compilate (importo > 0). */
+const libereValide = o => o.libere.filter(v => num(v.importo) > 0);
+
+/** listino = bottiglie + voci libere; netto = listino − sconto (quello che il tavolo deve pagare). */
 function totaleCarrello() {
   const o = S.ordine;
   let listino = 0, pezzi = 0;
   S.d.bottiglie.forEach(b => { const q = o.qta[b.id] || 0; listino += q * b.prezzo; pezzi += q; });
-  return { listino, pezzi };
+  const libere = libereValide(o);
+  libere.forEach(v => { listino += tondo(v.importo); });
+  listino = tondo(listino);
+  return { listino, pezzi, voci: pezzi + libere.length, netto: tondo(listino - num(o.sconto)) };
+}
+
+/** Drink residue del tavolo; in modifica quelle del vecchio ordine tornano disponibili. */
+function residueOrdine() {
+  const vecchio = S.ordine.sostituisce && S.d.ordini.find(x => x.id === S.ordine.sostituisce);
+  return drinkTavolo(S.tavoloId).residue + (vecchio && ordineAttivo(vecchio) ? num(vecchio.n_drink) : 0);
 }
 
 function pagatoOrdine() {
@@ -543,14 +571,19 @@ const VIEWS = {
       if (num(o.carta)) pag.push('Carta ' + eur(o.carta));
       if (num(o.n_drink)) pag.push(o.n_drink + ' drink (' + eur(o.valore_drink) + ')');
       const ann = o.stato === 'annullato';
-      return `<div class="card ordine${ann ? ' annullato' : ''}">
+      const mod = o.stato === 'modificato';
+      return `<div class="card ordine${ann ? ' annullato' : ''}${mod ? ' modificato' : ''}">
         <div class="row"><b>${ora(o.timestamp)}</b><span class="muted" style="flex:1">${esc(o.operatore)}</span>
-          <span class="badge${o.invio ? ' invio' : ''}">${ann ? 'ANNULLATO' : o.invio ? 'invio…' : esc(o.metodo)}</span></div>
+          <span class="badge${o.invio ? ' invio' : ''}">${ann ? 'ANNULLATO' : mod ? 'MODIFICATO' : o.invio ? 'invio…' : esc(o.metodo)}</span></div>
+        ${o.sostituisce ? '<div class="muted">Ordine modificato</div>' : ''}
         <div class="det">${esc(o.dettaglio)}</div>
         <div class="row"><span>Listino ${eur(o.totale_listino)}</span><span>Pagato <b>${eur(o.totale_pagato)}</b></span></div>
+        ${num(o.sconto) ? `<div class="muted">Sconto ${eur(o.sconto)} · da pagare ${eur(num(o.totale_listino) - num(o.sconto))}</div>` : ''}
         ${pag.length ? `<div class="muted">${pag.join(' · ')}</div>` : ''}
         ${o.note ? `<div class="muted">Nota: ${esc(o.note)}</div>` : ''}
-        ${ann || o.invio ? '' : `<div style="text-align:right;margin-top:8px"><button class="btn danger small" data-act="annullaOrdine" data-id="${esc(o.id)}">Annulla ordine</button></div>`}
+        ${ann || mod || o.invio ? '' : `<div class="row" style="justify-content:flex-end;margin-top:8px">
+          <button class="btn small" data-act="modificaOrdine" data-id="${esc(o.id)}">Modifica</button>
+          <button class="btn danger small" data-act="annullaOrdine" data-id="${esc(o.id)}">Annulla ordine</button></div>`}
       </div>`;
     }).join('');
 
@@ -636,29 +669,38 @@ const VIEWS = {
             </div>
           </div>`;
         }).join('')).join('');
+      const libere = `<div class="cat">${VOCE_LIBERA} (importo a mano)</div>
+        ${o.libere.map((v, i) => `<div class="lib">
+          <input data-lib="${i}" data-f="descr" placeholder="es. Acqua" value="${esc(v.descr)}" maxlength="60" autocomplete="off">
+          <input data-lib="${i}" data-f="importo" inputmode="decimal" placeholder="€" value="${esc(v.importo)}" autocomplete="off">
+          <button class="x" data-act="togliLibera" data-i="${i}" aria-label="Togli">✕</button></div>`).join('')}
+        <button class="btn small" data-act="aggiungiLibera">+ ${VOCE_LIBERA}</button>`;
       return {
-        header: hdr('Ordine · ' + esc(t.etichetta), 'esciOrdine'),
-        body: body || '<p class="empty">Listino vuoto: aggiungi bottiglie nel foglio "Bottiglie".</p>',
-        footer: `<div style="flex:1"><div class="muted">${tot.pezzi} bottiglie</div><div class="kpi">${eur(tot.listino)}</div></div>
-          <button class="btn primary" data-act="avanti"${tot.pezzi ? '' : ' disabled'}>Pagamento ›</button>`,
+        header: hdr((o.sostituisce ? 'Modifica ordine · ' : 'Ordine · ') + esc(t.etichetta), 'esciOrdine'),
+        body: (body || '<p class="empty">Listino vuoto: aggiungi bottiglie nel foglio "Bottiglie".</p>') + libere,
+        footer: `<div style="flex:1"><div class="muted" id="carrPezzi">${tot.pezzi} bottiglie</div><div class="kpi" id="carrTot">${eur(tot.listino)}</div></div>
+          <button class="btn primary" id="carrAvanti" data-act="avanti"${tot.voci ? '' : ' disabled'}>Pagamento ›</button>`,
       };
     }
 
-    const d = drinkTavolo(t.id);
     const righe = S.d.bottiglie.filter(b => o.qta[b.id]).map(b =>
-      `<div class="row"><span>${o.qta[b.id]}× ${esc(b.nome)}</span><span>${eur(o.qta[b.id] * b.prezzo)}</span></div>`).join('');
+      `<div class="row"><span>${o.qta[b.id]}× ${esc(b.nome)}</span><span>${eur(o.qta[b.id] * b.prezzo)}</span></div>`).join('') +
+      libereValide(o).map(v => `<div class="row"><span>${esc(String(v.descr).trim() || VOCE_LIBERA)}</span><span>${eur(v.importo)}</span></div>`).join('');
     return {
       header: hdr('Pagamento · ' + esc(t.etichetta), 'indietro'),
       body: `<div class="card">${righe}
           <div class="row" style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
             <span>Totale listino</span><span class="big">${eur(tot.listino)}</span></div>
+          <label for="sconto">Sconto (€)</label>
+          <input id="sconto" data-pag="sconto" inputmode="decimal" placeholder="0" value="${esc(o.sconto)}">
+          <div class="row" style="margin-top:10px"><span>Da pagare</span><span class="big" id="daPagare">${eur(tot.netto)}</span></div>
         </div>
         <div class="card">
           <label for="contanti">Contanti (€)</label>
           <input id="contanti" data-pag="contanti" inputmode="decimal" placeholder="0" value="${esc(o.contanti)}">
           <label for="carta">Carta (€)</label>
           <input id="carta" data-pag="carta" inputmode="decimal" placeholder="0" value="${esc(o.carta)}">
-          <label>Drink (1 drink = ${eur(S.d.valoreDrink)}) · residue da ingressi: <b>${d.residue}</b></label>
+          <label>Drink (1 drink = ${eur(S.d.valoreDrink)}) · residue da ingressi: <b>${residueOrdine()}</b></label>
           <div class="row">
             <div class="step">
               <button data-act="drink" data-d="-1" aria-label="Togli drink">−</button>
@@ -678,7 +720,7 @@ const VIEWS = {
         <div class="card" id="pagSummary"></div>
         <label for="nota">Note (facoltative)</label>
         <textarea id="nota" data-pag="note" placeholder="es. sconto amico, omaggio…">${esc(o.note)}</textarea>`,
-      footer: '<button class="btn primary" data-act="conferma">Conferma ordine</button>',
+      footer: `<button class="btn primary" data-act="conferma">${o.sostituisce ? 'Salva modifica' : 'Conferma ordine'}</button>`,
       after: aggiornaPag,
     };
   },
@@ -696,7 +738,7 @@ const VIEWS = {
 
     const perBott = {};
     S.d.righe.forEach(r => {
-      const k = r.bottiglia;
+      const k = r.categoria === VOCE_LIBERA ? 'Voci libere' : r.bottiglia;
       perBott[k] = perBott[k] || { qta: 0, tot: 0 };
       perBott[k].qta += num(r.qta);
       perBott[k].tot += num(r.totale);
@@ -721,10 +763,11 @@ const VIEWS = {
         <div class="kpis">
           <div class="card"><div class="muted">Pagato</div><div class="kpi">${eur(o.pagato)}</div></div>
           <div class="card"><div class="muted">Listino</div><div class="kpi">${eur(o.listino)}</div></div>
-          <div class="card"><div class="muted">Differenza</div><div class="kpi">${diffHtml(o.pagato - o.listino)}</div></div>
+          <div class="card"><div class="muted">Differenza</div><div class="kpi">${diffHtml(o.pagato - (o.listino - o.sconto))}</div></div>
           <div class="card"><div class="muted">Bottiglie</div><div class="kpi">${o.bott}</div></div>
         </div>
         <div class="card">
+          ${o.sconto ? `<div class="row"><span>Sconti</span><b>${eur(o.sconto)}</b></div>` : ''}
           <div class="row"><span>Contanti</span><b>${eur(o.contanti)}</b></div>
           <div class="row"><span>Carta</span><b>${eur(o.carta)}</b></div>
           <div class="row"><span>Drink usate (${o.drink})</span><b>${eur(o.valDrink)}</b></div>
@@ -886,14 +929,31 @@ const righeVuote = () => Array.from({ length: 5 }, () => ({ numero: '', nome: ''
 function aggiornaPag() {
   const box = $('pagSummary');
   if (!box) return;
-  const listino = totaleCarrello().listino;
+  const tot = totaleCarrello();
   const pagato = pagatoOrdine();
-  const residue = drinkTavolo(S.tavoloId).residue;
+  const residue = residueOrdine();
   $('valDrink').textContent = eur(S.ordine.drink * S.d.valoreDrink);
+  $('daPagare').textContent = eur(tot.netto);
   $('drinkAvviso').innerHTML = S.ordine.drink > residue
     ? `<div class="avviso">Attenzione: ${S.ordine.drink} drink ma il tavolo ne ha ${residue} residue dagli ingressi.</div>` : '';
   box.innerHTML = `<div class="row"><span>Totale pagato</span><span class="big">${eur(pagato)}</span></div>
-    <div class="row"><span class="muted">Differenza su listino</span><span>${diffHtml(pagato - listino)}</span></div>`;
+    <div class="row"><span class="muted">Differenza su da pagare</span><span>${diffHtml(pagato - tot.netto)}</span></div>`;
+}
+
+/** Passo 1 dell'ordine: aggiorna totale e pulsante senza ridisegnare (le voci libere si stanno scrivendo). */
+function aggiornaCarrello() {
+  const tot = totaleCarrello();
+  if (!$('carrTot')) return;
+  $('carrTot').textContent = eur(tot.listino);
+  $('carrAvanti').disabled = !tot.voci;
+}
+
+/** Righe delle voci libere come le scrive il server (per la vista "invio…"). */
+function righeLibereVista(o, base) {
+  return libereValide(o).map(v => {
+    const importo = tondo(v.importo);
+    return Object.assign({}, base, { categoria: VOCE_LIBERA, bottiglia: String(v.descr).trim() || VOCE_LIBERA, qta: 1, prezzo_unit: importo, totale: importo });
+  });
 }
 
 // ------------------------------------------------------------ azioni
@@ -1054,23 +1114,59 @@ const ACT = {
     render();
   },
   nuovoOrdine() {
-    S.ordine = { id: nuovoId('O'), step: 1, qta: {}, contanti: '', carta: '', drink: 0, note: '' };
+    S.ordine = { id: nuovoId('O'), step: 1, qta: {}, libere: [], contanti: '', carta: '', drink: 0, sconto: '', note: '', sostituisce: '' };
+    S.view = 'ordine';
+    render();
+    window.scrollTo(0, 0);
+  },
+  /** Riapre un ordine già salvato: alla conferma il vecchio diventa "modificato" e ne nasce uno nuovo. */
+  modificaOrdine(ds) {
+    const v = S.d.ordini.find(o => o.id === ds.id);
+    if (!v || !ordineAttivo(v)) return;
+    const qta = {}, libere = [], mancanti = [];
+    S.d.righe.filter(r => r.ordine_id === v.id).forEach(r => {
+      if (r.categoria === VOCE_LIBERA) return libere.push({ descr: r.bottiglia === VOCE_LIBERA ? '' : r.bottiglia, importo: String(r.totale) });
+      const b = S.d.bottiglie.find(x => x.nome === r.bottiglia);
+      if (b) qta[b.id] = (qta[b.id] || 0) + num(r.qta); else mancanti.push(r.qta + '× ' + r.bottiglia);
+    });
+    if (mancanti.length && !confirm('Non più nel listino, vanno tolte dall\'ordine:\n' + mancanti.join('\n') + '\n\nContinuare?')) return;
+    const imp = n => num(n) ? String(tondo(n)) : '';
+    S.ordine = {
+      id: nuovoId('O'), step: 1, qta, libere, contanti: imp(v.contanti), carta: imp(v.carta), drink: num(v.n_drink),
+      sconto: imp(v.sconto), note: String(v.note || ''), sostituisce: v.id,
+    };
     S.view = 'ordine';
     render();
     window.scrollTo(0, 0);
   },
   esciOrdine() {
-    if (totaleCarrello().pezzi && !confirm('Uscire senza salvare l\'ordine?')) return;
+    const msg = S.ordine.sostituisce ? 'Uscire senza salvare la modifica?' : 'Uscire senza salvare l\'ordine?';
+    if ((S.ordine.sostituisce || totaleCarrello().voci) && !confirm(msg)) return;
     S.ordine = null;
     S.view = 'tavolo';
     render();
   },
+  aggiungiLibera() {
+    S.ordine.libere.push({ descr: '', importo: '' });
+    render();
+    const el = document.querySelector('[data-lib="' + (S.ordine.libere.length - 1) + '"][data-f=descr]');
+    if (el) el.focus();
+  },
+  togliLibera(ds) { S.ordine.libere.splice(Number(ds.i), 1); render(); },
   qta(ds) {
     const q = Math.max(0, (S.ordine.qta[ds.id] || 0) + Number(ds.d));
     if (q) S.ordine.qta[ds.id] = q; else delete S.ordine.qta[ds.id];
     render();
   },
-  avanti() { S.ordine.step = 2; render(); window.scrollTo(0, 0); },
+  avanti() {
+    const o = S.ordine;
+    const errata = o.libere.find(v => (String(v.descr).trim() || String(v.importo).trim()) && !(/^\d+([.,]\d{1,2})?$/.test(String(v.importo).trim()) && num(v.importo) > 0));
+    if (errata) return toast('Importo non valido per "' + (String(errata.descr).trim() || VOCE_LIBERA) + '"');
+    o.libere = libereValide(o);
+    o.step = 2;
+    render();
+    window.scrollTo(0, 0);
+  },
   indietro() { S.ordine.step = 1; render(); },
   drink(ds) {
     S.ordine.drink = Math.max(0, S.ordine.drink + Number(ds.d));
@@ -1078,7 +1174,7 @@ const ACT = {
   },
   tutto(ds) {
     const o = S.ordine;
-    const listino = totaleCarrello().listino;
+    const listino = Math.max(0, totaleCarrello().netto);
     o.contanti = ''; o.carta = ''; o.drink = 0;
     if (ds.m === 'contanti') o.contanti = String(tondo(listino));
     if (ds.m === 'carta') o.carta = String(tondo(listino));
@@ -1087,29 +1183,40 @@ const ACT = {
   },
   conferma() {
     const o = S.ordine;
-    for (const k of ['contanti', 'carta']) {
+    for (const k of ['contanti', 'carta', 'sconto']) {
       const v = String(o[k]).trim();
       if (v && !/^\d+([.,]\d{1,2})?$/.test(v)) return toast('Importo ' + k + ' non valido');
     }
+    const tot = totaleCarrello();
+    if (tot.netto < 0) return toast('Sconto più alto del totale listino');
     if (pagatoOrdine() === 0 && !confirm('Totale pagato € 0. Confermare comunque?')) return;
-    const residue = drinkTavolo(S.tavoloId).residue;
+    const residue = residueOrdine();
     if (o.drink > residue && !confirm('Il tavolo ha solo ' + residue + ' drink residue dagli ingressi, ne stai usando ' + o.drink + '. Confermare comunque?')) return;
     if (!serataOk()) return;
     const t = tavolo();
+    const libere = libereValide(o).map(v => ({ descr: String(v.descr).trim(), importo: String(v.importo).trim() }));
     const payload = {
       id: o.id,
       serataId: S.d.serata.id,
       tavoloId: t.id,
       righe: Object.keys(o.qta).map(id => ({ bottigliaId: id, qta: o.qta[id] })),
+      libere,
       contanti: o.contanti,
       carta: o.carta,
+      sconto: o.sconto,
       nDrink: o.drink,
       note: o.note,
       operatore: S.operatore,
+      sostituisce: o.sostituisce,
     };
     // Come lo scriverà il server: compare subito nel tavolo, segnato "invio…"
     const bott = S.d.bottiglie.filter(b => o.qta[b.id]);
-    const listino = tondo(totaleCarrello().listino);
+    const base = { ordine_id: o.id, serata_id: payload.serataId, tavolo: t.etichetta, stato: 'attivo' };
+    const righe = bott.map(b => Object.assign({}, base, {
+      categoria: b.categoria, bottiglia: b.nome, qta: o.qta[b.id], prezzo_unit: b.prezzo, totale: b.prezzo * o.qta[b.id],
+    })).concat(righeLibereVista(o, base));
+    const listino = tot.listino;
+    const sconto = tondo(o.sconto);
     const valDrink = tondo(o.drink * S.d.valoreDrink);
     const pagato = tondo(num(o.contanti) + num(o.carta) + valDrink);
     const metodi = [];
@@ -1118,23 +1225,22 @@ const ACT = {
     if (o.drink > 0) metodi.push('Drink');
     accoda({
       tipo: 'ordine', action: 'creaOrdine', modo: 'tavoli', payload,
-      descr: 'Ordine tavolo ' + t.etichetta + ' (' + eur(listino) + ')',
+      descr: (o.sostituisce ? 'Modifica ordine tavolo ' : 'Ordine tavolo ') + t.etichetta + ' (' + eur(listino) + ')',
       vista: {
         id: o.id, serata_id: payload.serataId, tavolo_id: t.id, tavolo: t.etichetta, timestamp: adesso(),
-        operatore: S.operatore, dettaglio: bott.map(b => o.qta[b.id] + '× ' + b.nome).join(', '),
-        n_bottiglie: totaleCarrello().pezzi, totale_listino: listino, contanti: tondo(o.contanti), carta: tondo(o.carta),
-        n_drink: o.drink, valore_drink: valDrink, totale_pagato: pagato, differenza: tondo(pagato - listino),
+        operatore: S.operatore,
+        dettaglio: righe.map(r => r.categoria === VOCE_LIBERA ? r.bottiglia + ' (€ ' + r.totale + ')' : r.qta + '× ' + r.bottiglia).join(', '),
+        n_bottiglie: tot.pezzi, totale_listino: listino, contanti: tondo(o.contanti), carta: tondo(o.carta),
+        n_drink: o.drink, valore_drink: valDrink, totale_pagato: pagato, differenza: tondo(pagato - (listino - sconto)),
         metodo: !metodi.length ? 'Non pagato' : metodi.length === 1 ? metodi[0] : 'Mix (' + metodi.join(' + ') + ')',
-        stato: 'attivo', note: String(o.note || '').trim(), invio: true,
+        stato: 'attivo', note: String(o.note || '').trim(), sconto, sostituisce: o.sostituisce, invio: true,
       },
-      righe: bott.map(b => ({
-        ordine_id: o.id, serata_id: payload.serataId, tavolo: t.etichetta, categoria: b.categoria, bottiglia: b.nome,
-        qta: o.qta[b.id], prezzo_unit: b.prezzo, totale: b.prezzo * o.qta[b.id], stato: 'attivo',
-      })),
+      righe,
     });
+    const modifica = !!o.sostituisce;
     S.ordine = null;
     S.view = 'tavolo';
-    toast('Ordine registrato', true);
+    toast(modifica ? 'Modifica registrata' : 'Ordine registrato', true);
     render();
     window.scrollTo(0, 0);
   },
@@ -1153,6 +1259,10 @@ document.addEventListener('input', e => {
   if (ds.pag && S.ordine) {
     S.ordine[ds.pag] = e.target.value;
     aggiornaPag();
+  }
+  if (ds.lib !== undefined && S.ordine) {
+    S.ordine.libere[Number(ds.lib)][ds.f] = e.target.value;
+    aggiornaCarrello();
   }
   if (ds.nt !== undefined && S.nuovi) S.nuovi[Number(ds.nt)][ds.f] = e.target.value;
   if (e.target.id === 'dataSerata') S.dataSerata = e.target.value;
