@@ -353,7 +353,7 @@ const adesso = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.get
 let ultimoIngresso = 0;
 const tondo = n => Math.round(num(n) * 100) / 100;
 const diffHtml = n => { n = tondo(n); return n === 0 ? eur(0) : '<span class="' + (n > 0 ? 'pos' : 'neg') + '">' + (n > 0 ? '+' : '−') + eur(Math.abs(n)) + '</span>'; };
-const VERSIONE = '01/11 sconti';  // mostrata in fondo: se non è questa, ricaricare la pagina
+const VERSIONE = '01/11 fasce sconto';  // mostrata in fondo: se non è questa, ricaricare la pagina
 const NOMI_MODO = { tavoli: 'Cambusa', ingressi: 'Ingresso tavoli' };
 const isTavoli = () => S.d && S.d.modo === 'tavoli';
 const nomeModo = () => NOMI_MODO[isTavoli() ? 'tavoli' : 'ingressi'];
@@ -424,6 +424,28 @@ function totaleCarrello() {
   libere.forEach(v => { listino += tondo(v.importo); });
   listino = tondo(listino);
   return { listino, pezzi, voci: pezzi + libere.length, netto: tondo(listino - num(o.sconto)) };
+}
+
+// Sconto massimo indicativo (% sul listino): solo avviso, l'ordine si può salvare comunque.
+// Pagamento misto: vale la fascia più bassa (25% solo se tutto in contanti).
+const FASCE_SCONTO = { contanti: 25, pos: 10, drink: 10, notte: 5, oraNotte: 3 };
+
+/** Fascia di sconto dell'ordine in corso: max = null finché non è indicato il pagamento. */
+function fasciaSconto() {
+  const o = S.ordine;
+  const vecchio = o.sostituisce && S.d.ordini.find(x => x.id === o.sostituisce);
+  const h = Number(String(vecchio ? vecchio.timestamp : adesso()).slice(11, 13));  // in modifica conta l'ora dell'ordine
+  const notte = h >= FASCE_SCONTO.oraNotte && h < 12 ? FASCE_SCONTO.notte : 0;
+  const pos = num(o.carta) > 0, drink = o.drink > 0, contanti = num(o.contanti) > 0;
+  let base = null, motivo = '';
+  if (pos || drink) {
+    base = Math.min(pos ? FASCE_SCONTO.pos : 100, drink ? FASCE_SCONTO.drink : 100);
+    motivo = [contanti && 'contanti', pos && 'POS', drink && 'drink'].filter(Boolean).join(' + ');
+  } else if (contanti) {
+    base = FASCE_SCONTO.contanti;
+    motivo = 'solo contanti';
+  }
+  return { base, notte, motivo, max: base === null ? null : base + notte };
 }
 
 /** Drink residue del tavolo; in modifica quelle del vecchio ordine tornano disponibili. */
@@ -694,6 +716,7 @@ const VIEWS = {
           <label for="sconto">Sconto (€)</label>
           <input id="sconto" data-pag="sconto" inputmode="decimal" placeholder="0" value="${esc(o.sconto)}">
           <div class="row" style="margin-top:10px"><span>Da pagare</span><span class="big" id="daPagare">${eur(tot.netto)}</span></div>
+          <div id="scontoInfo" class="muted" style="margin-top:6px"></div>
         </div>
         <div class="card">
           <label for="contanti">Contanti (€)</label>
@@ -934,6 +957,17 @@ function aggiornaPag() {
   const residue = residueOrdine();
   $('valDrink').textContent = eur(S.ordine.drink * S.d.valoreDrink);
   $('daPagare').textContent = eur(tot.netto);
+  const f = fasciaSconto();
+  const pc = p => p.toLocaleString('it-IT', { maximumFractionDigits: 1 }) + '%';
+  const scontoPerc = tot.listino ? num(S.ordine.sconto) / tot.listino * 100 : 0;
+  const oltre = f.max !== null && tondo(scontoPerc) > f.max;
+  $('scontoInfo').innerHTML = f.max === null
+    ? `Sconto massimo indicativo: contanti ${FASCE_SCONTO.contanti}%, POS ${FASCE_SCONTO.pos}%, drink ${FASCE_SCONTO.drink}%${f.notte ? ', +' + f.notte + '% dalle ' + FASCE_SCONTO.oraNotte : ''}`
+    : `Sconto massimo indicativo (${esc(f.motivo)}): ` +
+      (f.notte ? `${f.base}% + ${f.notte}% dalle ${FASCE_SCONTO.oraNotte} = ` : '') +
+      `<b>${pc(f.max)} (${eur(tot.listino * f.max / 100)})</b>` +
+      (num(S.ordine.sconto) ? ` · inserito ${pc(scontoPerc)}` : '') +
+      (oltre ? '<div class="avviso">Sconto oltre il massimo indicativo.</div>' : '');
   $('drinkAvviso').innerHTML = S.ordine.drink > residue
     ? `<div class="avviso">Attenzione: ${S.ordine.drink} drink ma il tavolo ne ha ${residue} residue dagli ingressi.</div>` : '';
   box.innerHTML = `<div class="row"><span>Totale pagato</span><span class="big">${eur(pagato)}</span></div>
@@ -1189,6 +1223,10 @@ const ACT = {
     }
     const tot = totaleCarrello();
     if (tot.netto < 0) return toast('Sconto più alto del totale listino');
+    const f = fasciaSconto();
+    const scontoPerc = tot.listino ? tondo(num(o.sconto) / tot.listino * 100) : 0;
+    if (f.max !== null && scontoPerc > f.max &&
+      !confirm('Sconto ' + String(scontoPerc).replace('.', ',') + '% oltre il massimo indicativo ' + f.max + '% (' + f.motivo + '). Confermare comunque?')) return;
     if (pagatoOrdine() === 0 && !confirm('Totale pagato € 0. Confermare comunque?')) return;
     const residue = residueOrdine();
     if (o.drink > residue && !confirm('Il tavolo ha solo ' + residue + ' drink residue dagli ingressi, ne stai usando ' + o.drink + '. Confermare comunque?')) return;
